@@ -10,7 +10,7 @@ TOKEN_PAYLOAD = {"refresh": REFRESH_TOKEN}
 TOKEN_URL = f'{BASE_URL}/token/refresh/'
 TOKEN_RESPONSE = json.loads(requests.request("POST", TOKEN_URL, json=TOKEN_PAYLOAD).text)
 
-ACCESS_TOKEN = 'Bearer ' + TOKEN_RESPONSE.get('access')
+ACCESS_TOKEN = 'Bearer ' + str(TOKEN_RESPONSE.get('access'))
 
 HEADERS = {
     "Authorization": ACCESS_TOKEN,
@@ -327,7 +327,7 @@ def get_table_info(headers, datasource_url, schema):
     if table_choice['tb'] == 'Unmonitored Tables':
         if len(disabled_tables) > 0:
             print(disabled_tables)
-        except:
+        else:
             print('All Tables are Monitored')
             exit()
 
