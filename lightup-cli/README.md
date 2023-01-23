@@ -18,6 +18,8 @@ that is in the same folder as the lightup_ctl.py file.
 
 The user will be prompted to either run the Lightup Audit (Audit), explore their Lightup instance (Explore), or exit (EXIT).
 
-The Audit function will look for all changes in Lightup within the last day.
+The Audit function will look for all changes in Lightup within the last day, any orphaned metrics, and will output the results of
+the audit into a JSON file in the same folder location as the python script
+- An orphaned metric is any metric that is 24-hours or older and does not have an associated monitor
 
 The Explore function will allow the user to explore Lightup based on their role permissions.
