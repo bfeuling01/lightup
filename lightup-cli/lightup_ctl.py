@@ -2,9 +2,12 @@ import requests, json, inquirer
 from datetime import datetime, timedelta
 
 ################## GET ACCESS TOKEN ##################
-BASE_URL = "<LIGHTUP URL>"
+f = open('./lightup-api-credential.json')
+data = json.load(f)
 
-REFRESH_TOKEN = "<REFRESH TOKEN>"
+REFRESH_TOKEN = str(data.get('data', {}).get('refresh'))
+SERVER = str(data.get('data', {}).get('server'))
+BASE_URL = f'{SERVER}/api/v1'
 
 TOKEN_PAYLOAD = {"refresh": REFRESH_TOKEN}
 TOKEN_URL = f'{BASE_URL}/token/refresh/'
