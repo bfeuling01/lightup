@@ -2,9 +2,9 @@ import requests, json, inquirer
 from datetime import datetime, timedelta
 
 ################## GET ACCESS TOKEN ##################
-BASE_URL = "https://app.demo.lightup.ai/api/v1"
+BASE_URL = "<LIGHTUP URL>"
 
-REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ0b2tlbl90eXBlIjoicmVmcmVzaCIsImV4cCI6MTcwMjU4MzAyNiwianRpIjoiMDkwN2MxNTM2ZTY0NGNjNTkyMmQ3ODFmZGQ4ZTk1MTgiLCJ1c2VyX2lkIjoyNX0.3dF2WPr6JapHGhvm4_S68DgG7IPevgMcbNXYUs6TSMo"
+REFRESH_TOKEN = "<REFRESH TOKEN>"
 
 TOKEN_PAYLOAD = {"refresh": REFRESH_TOKEN}
 TOKEN_URL = f'{BASE_URL}/token/refresh/'
