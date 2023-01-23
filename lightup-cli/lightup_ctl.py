@@ -36,6 +36,7 @@ def daily_audit(headers):
     COLUMNS_AUDIT = {}
     METRICS_AUDIT = {}
     MONITORS_AUDIT = {}
+    ORPHANED_METRICS = {}
     
     #### GET WORKSPACES FOR AUDIT USAGE
     print('GETTING WORKSPACE INFO')
@@ -123,13 +124,17 @@ def daily_audit(headers):
             get_metrics_response = json.loads(requests.request("GET", metrics_list_url, headers=headers).text)
             
             #### STORE METRICS FOR MONITOR COMPARISON
-            metric_list = {}
+            metric_dict = {}
+            metrics_set = set()
             
             #### LOOP THROUGH METRICS
             for metric in get_metrics_response:
                 if metric.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY:
                     METRICS_AUDIT['METRIC'] = str(metric.get('metadata', {}).get('name')) + ' - ' + str(metric.get('metadata', {}).get('uuid'))
                     METRICS_AUDIT['CREATED BY'] = str(metric.get('metadata', {}).get('ownedBy', {}).get('username'))
+                    
+                metrics_set.add(str(metric.get('metadata', {}).get('uuid')))
+                metric_dict[str(metric.get('metadata', {}).get('uuid'))] = metric.get('status', {}).get('createdTs')
             
             #### CREATE MONITORS SEPARATOR
             print(f'GETTING MONITOR INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
@@ -137,14 +142,25 @@ def daily_audit(headers):
             get_monitors_response = json.loads(requests.request("GET", monitors_list_url, headers=headers).text)
             
             #### STORE MONITORS FOR METRIC COMPARISON
-            monitors_list = {}
+            monitors_set = set()
             
             #### LOOP THROUGH MONITORS
             for monitor in get_monitors_response.get('data'):
                 if monitor.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(monitor.get('status', {}).get('createdTs')) >= LAST_DAY:
                     MONITORS_AUDIT['MONITOR'] = str(monitor.get('metadata', {}).get('name')) + ' - ' + str(monitor.get('metadata', {}).get('uuid'))
                     MONITORS_AUDIT['CREATED BY'] = str(monitor.get('metadata', {}).get('ownedBy', {}).get('username'))
-                    
+                
+                monitors_set.add(str(monitor.get('metadata', {}).get('uuid')))
+            
+            final_set = metrics_set - monitors_set
+                
+            for m in final_set:
+                now = datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
+                mdt = datetime.fromtimestamp(metric_dict[m])
+                diff = now - mdt
+                hour_diff = (diff.days * 24) + (diff.seconds // 3600)
+                if hour_diff > 24:
+                    ORPHANED_METRICS[m] = f'{hour_diff} hours orphand'
     
     AUDIT_LIST['WORKSPACES'] = (WORKSPACES_AUDIT if len(WORKSPACES_AUDIT) > 0 else 'NO WORKSPACE CHANGES')
     AUDIT_LIST['DATASOURCES'] = (DATASOURCES_AUDIT if len(DATASOURCES_AUDIT) > 0 else 'NO DATASOURCE CHANGES')
@@ -153,13 +169,10 @@ def daily_audit(headers):
     AUDIT_LIST['COLUMNS'] = (COLUMNS_AUDIT if len(COLUMNS_AUDIT) > 0 else 'NO COLUMN CHANGES')
     AUDIT_LIST['METRIC'] = (METRICS_AUDIT if len(METRICS_AUDIT) > 0 else 'NO METRIC CHANGES')
     AUDIT_LIST['MONITORS'] = (MONITORS_AUDIT if len(MONITORS_AUDIT) > 0 else 'NO MONITOR CHANGES')
+    AUDIT_LIST['ORPHANED METRICS'] = (ORPHANED_METRICS if len(ORPHANED_METRICS) > 0 else 'NO ORPHANED METRICS')
     
-    for a in AUDIT_LIST:
-        if type(AUDIT_LIST[a]) is dict:
-            for l in AUDIT_LIST[a]:
-                print(f'{l}: {AUDIT_LIST[a][l]}')
-        else:
-            print(f'NO {a} CHANGES')
+    with open("audit_output.json", "w") as audit_file:
+        json.dump(AUDIT_LIST, audit_file)
 
 ################## GET WORKSPACE ##################
 # USER SELECTS WORKSPACE FROM LIST
