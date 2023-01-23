@@ -1,22 +1,162 @@
-import requests, json, inquirer, datetime
+import requests, json, inquirer
+from datetime import datetime, timedelta
 
 ################## GET ACCESS TOKEN ##################
-BASE_URL = "https://<INSERT BASE URL>/api/v1"
+BASE_URL = "https://app.demo.lightup.ai/api/v1"
 
-# SEE THIS DOC FOR MORE INFO: https://docs.lightup.ai/reference/post_api-v1-token-refresh
-REFRESH_TOKEN = "<INSERT LIGHTUP API TOKEN>"
+REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ0b2tlbl90eXBlIjoicmVmcmVzaCIsImV4cCI6MTcwMjU4MzAyNiwianRpIjoiMDkwN2MxNTM2ZTY0NGNjNTkyMmQ3ODFmZGQ4ZTk1MTgiLCJ1c2VyX2lkIjoyNX0.3dF2WPr6JapHGhvm4_S68DgG7IPevgMcbNXYUs6TSMo"
 
 TOKEN_PAYLOAD = {"refresh": REFRESH_TOKEN}
 TOKEN_URL = f'{BASE_URL}/token/refresh/'
 TOKEN_RESPONSE = json.loads(requests.request("POST", TOKEN_URL, json=TOKEN_PAYLOAD).text)
 
-ACCESS_TOKEN = 'Bearer ' + str(TOKEN_RESPONSE.get('access'))
+ACCESS_TOKEN = 'Bearer ' + TOKEN_RESPONSE.get('access')
 
 HEADERS = {
     "Authorization": ACCESS_TOKEN,
     "Accept": "application/json"
 }
 
+def daily_audit(headers):
+    #### AUDIT_LIST DICT IS FOR AUDIT READOUT
+    #### WORKSPACES ARRAY IS FOR OBJECT LOOPING
+    #### LAST_DAY VAR IS FOR COMPARISON
+    print('RUNNING AUDIT')
+    print('THIS CAN TAKE A FEW MINUTES')
+    AUDIT_LIST = {}
+    workspaces = {}
+    LAST_DAY = (datetime.now() - timedelta(hours=24))
+    WORKSPACES_AUDIT = {}
+    DATASOURCES_AUDIT = {}
+    SCHEMAS_AUDIT = {}
+    TABLES_AUDIT = {}
+    COLUMNS_AUDIT = {}
+    METRICS_AUDIT = {}
+    MONITORS_AUDIT = {}
+    
+    #### GET WORKSPACES FOR AUDIT USAGE
+    print('GETTING WORKSPACE INFO')
+    workspaces_url = f'{BASE_URL}/workspaces'
+    get_workspaces_response = json.loads(requests.request("GET", workspaces_url, headers=headers).text)
+    
+    for w in get_workspaces_response.get('data'):
+        #### ADD WORKSPACE UUID FOR SCHEMA, TABLE, COLUMN, METRIC AUDITING
+        workspaces[str(w.get('name'))] = str(w.get('uuid'))
+        
+        #### CHECK FOR RECENT WORKSPACE CREATION
+        if w.get('created_at') is not None and datetime.fromtimestamp(w.get('created_at')) >= LAST_DAY:
+            WORKSPACES_AUDIT[str(w.get('name'))] = str(w.get('created_at'))
+
+    for wksp in workspaces:
+        print(f'GETTING DATASOURCE INFORMATION FOR {wksp}')
+        datasources_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources'
+        get_datasources_response = json.loads(requests.request("GET", datasources_list_url, headers=headers).text)
+        
+        #### DATASOURCES
+        for g in get_datasources_response:
+            #### GET UNIQUE DATASOURCE INFORMATION
+            source_uuid = g.get('metadata', {}).get('uuid')
+            source_name = g.get('metadata', {}).get('name')
+            
+            #### CHECK FOR RECENT DATASOURCE CREATION
+            if g.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(g.get('status', {}).get('createdTs')) >= LAST_DAY:
+                DATASOURCES_AUDIT[str(g.get('metadata', {}).get('name'))] = str(g.get('status', {}).get('createdTs'))
+                DATASOURCES_AUDIT['created_by'] = str(g.get('metadata', {}).get('ownedBy', {}).get('username'))
+            
+            #### CHECK FOR RECENT DATASOURCE UPDATES
+            if g.get('status', {}).get('configUpdatedTs') is not None and datetime.fromtimestamp(g.get('status', {}).get('configUpdatedTs')) >= LAST_DAY:
+                DATASOURCES_AUDIT[str(g.get('metadata', {}).get('name'))] = str(g.get('status', {}).get('configUpdatedTs'))
+                DATASOURCES_AUDIT['update_by'] = str(g.get('metadata', {}).get('updatedBy', {}).get('username'))
+            
+            print(f'GETTING SCHEMA INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
+            #### SCHEMAS
+            schemas_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/profile/schemas'
+            get_schema_response = json.loads(requests.request("GET", schemas_list_url, headers=headers).text)
+            
+            #### LOOP THROUGH SCHEMAS
+            for schema in get_schema_response.get('data'):
+                #### CHECK FOR REMOVED SCHEMAS
+                if schema.get('removedTs') is not None and datetime.fromtimestamp(schema.get('removedTs')) >= LAST_DAY:
+                    SCHEMAS_AUDIT['ACTION'] = ['SCHEMA REMOVED FROM SOURCE']
+                    SCHEMAS_AUDIT[str(schema.get('name'))] = str(datetime.fromtimestamp(schema.get('removedTs')))
+                
+                #### CHECK FOR ENABLED SCHEMAS
+                if schema.get('lastTablesScannedTs') is not None and datetime.fromtimestamp(schema.get('lastTablesScannedTs')) >= LAST_DAY:
+                    SCHEMAS_AUDIT['ACTION'] = ['SCHEMA ENABLED']
+                    SCHEMAS_AUDIT[str(schema.get('name'))] = str(datetime.fromtimestamp(schema.get('lastTablesScannedTs')))
+                
+                #### CHECK FOR NEW SCHEMAS
+                if schema.get('firstSeenTs') is not None and datetime.fromtimestamp(schema.get('firstSeenTs')) >= LAST_DAY:
+                    SCHEMAS_AUDIT['ACTION'] = ['NEW SCHEMA FOUND']
+                    SCHEMAS_AUDIT[str(schema.get('name'))] = str(datetime.fromtimestamp(schema.get('firstSeenTs')))
+            
+            #### CREATE TABLES SEPARATOR
+            print(f'GETTING TABLE INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
+            tables_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/tables'
+            get_tables_response = json.loads(requests.request("GET", tables_list_url, headers=headers).text)
+            
+            #### LOOP THROUGH TABLES
+            for g in get_tables_response:
+                #### GET TABLE UUID FOR API
+                table = str(g.get('tableUuid'))
+                table_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/profile/tables/{table}'
+                get_table_response = json.loads(requests.request("GET", table_list_url, headers=headers).text)
+                #### ADD NEW TABLES
+                if get_table_response.get('firstSeenTs') is not None and datetime.fromtimestamp(get_table_response.get('firstSeenTs')) >= LAST_DAY:
+                    TABLES_AUDIT[get_table_response.get('tableName')] = str(datetime.fromtimestamp(get_table_response.get('firstSeenTs')))
+                
+                #### GET COLUMN API URL
+                column_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/profile/tables/{table}/columns'
+                get_column_response = json.loads(requests.request("GET", column_list_url, headers=headers).text)
+                
+                #### LOOP THROUGH COLUMNS
+                for c in get_column_response:
+                    if c.get('firstSeenTs') is not None and datetime.fromtimestamp(c.get('firstSeenTs')) >= LAST_DAY:
+                        COLUMNS_AUDIT[c.get('columnName')] = str(datetime.fromtimestamp(c.get('firstSeenTs')))
+            
+            #### CREATE METRICS SEPARATOR
+            print(f'GETTING METRIC INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
+            metrics_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/metrics'
+            get_metrics_response = json.loads(requests.request("GET", metrics_list_url, headers=headers).text)
+            
+            #### STORE METRICS FOR MONITOR COMPARISON
+            metric_list = {}
+            
+            #### LOOP THROUGH METRICS
+            for metric in get_metrics_response:
+                if metric.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY:
+                    METRICS_AUDIT['METRIC'] = str(metric.get('metadata', {}).get('name')) + ' - ' + str(metric.get('metadata', {}).get('uuid'))
+                    METRICS_AUDIT['CREATED BY'] = str(metric.get('metadata', {}).get('ownedBy', {}).get('username'))
+            
+            #### CREATE MONITORS SEPARATOR
+            print(f'GETTING MONITOR INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
+            monitors_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/monitors'
+            get_monitors_response = json.loads(requests.request("GET", monitors_list_url, headers=headers).text)
+            
+            #### STORE MONITORS FOR METRIC COMPARISON
+            monitors_list = {}
+            
+            #### LOOP THROUGH MONITORS
+            for monitor in get_monitors_response.get('data'):
+                if monitor.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(monitor.get('status', {}).get('createdTs')) >= LAST_DAY:
+                    MONITORS_AUDIT['MONITOR'] = str(monitor.get('metadata', {}).get('name')) + ' - ' + str(monitor.get('metadata', {}).get('uuid'))
+                    MONITORS_AUDIT['CREATED BY'] = str(monitor.get('metadata', {}).get('ownedBy', {}).get('username'))
+                    
+    
+    AUDIT_LIST['WORKSPACES'] = (WORKSPACES_AUDIT if len(WORKSPACES_AUDIT) > 0 else 'NO WORKSPACE CHANGES')
+    AUDIT_LIST['DATASOURCES'] = (DATASOURCES_AUDIT if len(DATASOURCES_AUDIT) > 0 else 'NO DATASOURCE CHANGES')
+    AUDIT_LIST['SCHEMAS'] = (SCHEMAS_AUDIT if len(SCHEMAS_AUDIT) > 0 else 'NO SCHEMA CHANGES')
+    AUDIT_LIST['TABLES'] = (TABLES_AUDIT if len(TABLES_AUDIT) > 0 else 'NO TABLE CHANGES')
+    AUDIT_LIST['COLUMNS'] = (COLUMNS_AUDIT if len(COLUMNS_AUDIT) > 0 else 'NO COLUMN CHANGES')
+    AUDIT_LIST['METRIC'] = (METRICS_AUDIT if len(METRICS_AUDIT) > 0 else 'NO METRIC CHANGES')
+    AUDIT_LIST['MONITORS'] = (MONITORS_AUDIT if len(MONITORS_AUDIT) > 0 else 'NO MONITOR CHANGES')
+    
+    for a in AUDIT_LIST:
+        if type(AUDIT_LIST[a]) is dict:
+            for l in AUDIT_LIST[a]:
+                print(f'{l}: {AUDIT_LIST[a][l]}')
+        else:
+            print(f'NO {a} CHANGES')
 
 ################## GET WORKSPACE ##################
 # USER SELECTS WORKSPACE FROM LIST
@@ -65,7 +205,7 @@ def get_workspace_info(headers):
                 print(f"""
 Workspace Name: {str(d.get('name'))}
 Workspace Description: {str(d.get('description'))}
-Created at: {str(datetime.datetime.fromtimestamp(d.get('created_at')))}
+Created at: {str(datetime.fromtimestamp(d.get('created_at')))}
 """)
         
         ### Get a list of datasources in the workspace for the user
@@ -123,14 +263,14 @@ def get_datasource_info(headers, workspace):
 Datasource Name: {str(datasource_details.get('metadata', {}).get('name'))}
 Datasource Type: {str(datasource_details.get('config', {}).get('connection', {}).get('type'))}
 Owner: {str(datasource_details.get('metadata', {}).get('ownedBy', {}).get('email', datasource_details.get('metadata', {}).get('updatedBy', {}).get('email')))}
-Created At: {str(datetime.datetime.fromtimestamp(datasource_details.get('status', {}).get('createdTs')))}
+Created At: {str(datetime.fromtimestamp(datasource_details.get('status', {}).get('createdTs')))}
 Profiling Enabled: {str(datasource_details.get('config', {}).get('isLive'))}
 Datasource Tags: {str(datasource_details.get('metadata', {}).get('tags'))}""")
     if str(datasource_details.get('status', {}).get('lastScannedStatus')) == 'success':
-        print("Successful Last Scan: " + str(datetime.datetime.fromtimestamp(datasource_details.get('status', {}).get('lastScannedTs'))))
+        print("Successful Last Scan: " + str(datetime.fromtimestamp(datasource_details.get('status', {}).get('lastScannedTs'))))
     else:
         print(f"""
-Last Scan Failed At: {str(datetime.datetime.fromtimestamp(datasource_details.get('status', {}).get('lastScannedTs')))}
+Last Scan Failed At: {str(datetime.fromtimestamp(datasource_details.get('status', {}).get('lastScannedTs')))}
 Last Scan Fail Reason: {str(datasource_details.get('status', {}).get('lastScannedFailedReason'))}""")
 
     if ds_type == 'postgres':
@@ -254,11 +394,11 @@ SCHEMAS WITHOUT PROFILING:
     if nxt['next'] == 'Schema Details':
         for v in enabled_schemas.values():
             schema_details = json.loads(requests.request("GET", f'{schema_url}/{v}', headers=headers).text)
-            fs = str(datetime.datetime.fromtimestamp(schema_details.get('firstSeenTs'))) if schema_details.get('firstSeenTs') != None else "Never Seen"
-            lse = str(datetime.datetime.fromtimestamp(schema_details.get('lastSeenTs'))) if schema_details.get('lastSeenTs') != None else "Never Seen"
-            rem = str(datetime.datetime.fromtimestamp(schema_details.get('removedTs'))) if schema_details.get('removedTs') != None else "Still Live"
-            lts = str(datetime.datetime.fromtimestamp(schema_details.get('lastTablesScannedTs'))) if schema_details.get('lastTablesScannedTs') != None else "Never Scanned"
-            lsc = str(datetime.datetime.fromtimestamp(schema_details.get('lastScannedTs'))) if schema_details.get('lastScannedTs') != None else "Never Scanned"
+            fs = str(datetime.fromtimestamp(schema_details.get('firstSeenTs'))) if schema_details.get('firstSeenTs') != None else "Never Seen"
+            lse = str(datetime.fromtimestamp(schema_details.get('lastSeenTs'))) if schema_details.get('lastSeenTs') != None else "Never Seen"
+            rem = str(datetime.fromtimestamp(schema_details.get('removedTs'))) if schema_details.get('removedTs') != None else "Still Live"
+            lts = str(datetime.fromtimestamp(schema_details.get('lastTablesScannedTs'))) if schema_details.get('lastTablesScannedTs') != None else "Never Scanned"
+            lsc = str(datetime.fromtimestamp(schema_details.get('lastScannedTs'))) if schema_details.get('lastScannedTs') != None else "Never Scanned"
             print(f"""
 Schema Name: {str(schema_details.get('name'))}
 First Seen: {fs}
@@ -344,8 +484,8 @@ def get_table_info(headers, datasource_url, schema):
     print(f"""TABLE OVERVIEW
 Schema: {str(table_details.get('schemaName'))}
 Table: {str(table_details.get('tableName'))}
-Last Seen: {str(datetime.datetime.fromtimestamp(table_details.get('lastSeenTs')))}
-Last Scanned: {str(datetime.datetime.fromtimestamp(table_details.get('lastScannedTs')))}
+Last Seen: {str(datetime.fromtimestamp(table_details.get('lastSeenTs')))}
+Last Scanned: {str(datetime.fromtimestamp(table_details.get('lastScannedTs')))}
 Query Scope: {query_scope}
 Collection Type: {coll_sched}
 Timestamp Column: {str(table_details.get('profilerConfig', {}).get('timestampColumn'))}
@@ -361,8 +501,8 @@ Data Delay: {str(table_details.get('profilerConfig', {}).get('dataDelay', {}).ge
 Data Volume: {str(table_details.get('profilerConfig', {}).get('volume', {}).get('enabled'))}
 
 TABLE STATUS
-Data Delay Last Check: {str(datetime.datetime.fromtimestamp(table_details.get('status', {}).get('dataDelay', {}).get('lastEventTs')))}
-Data Volume Last Check: {str(datetime.datetime.fromtimestamp(table_details.get('status', {}).get('tableVolume', {}).get('lastEventTs')))}
+Data Delay Last Check: {str(datetime.fromtimestamp(table_details.get('status', {}).get('dataDelay', {}).get('lastEventTs')))}
+Data Volume Last Check: {str(datetime.fromtimestamp(table_details.get('status', {}).get('tableVolume', {}).get('lastEventTs')))}
             """)
     
     next_steps = [
@@ -413,4 +553,18 @@ def get_column_info(headers, table_url):
 
 
 if __name__ == '__main__':
-    get_workspace_info(HEADERS)
+    initial_action = [
+        inquirer.List(
+            "init",
+            message = "Audit or Explore?",
+            choices = ['Audit', 'Explore', 'EXIT'],
+        )
+    ]
+    
+    init_choice = inquirer.prompt(initial_action)
+    if init_choice['init'] == 'EXIT':
+        exit()
+    elif init_choice['init'] == 'Audit':
+        daily_audit(HEADERS)
+    else:
+        get_workspace_info(HEADERS)
