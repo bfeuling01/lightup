@@ -1,4 +1,4 @@
-import requests, json, inquirer
+import requests, json, inquirer, xlsxwriter as xl
 from datetime import datetime, timedelta
 
 ################## GET ACCESS TOKEN ##################
@@ -26,37 +26,54 @@ def daily_audit(headers):
     #### LAST_DAY VAR IS FOR COMPARISON
     print('RUNNING AUDIT')
     print('THIS CAN TAKE A FEW MINUTES')
-    AUDIT_LIST = {}
     workspaces = {}
     LAST_DAY = (datetime.now() - timedelta(hours=24))
-    WORKSPACES_AUDIT = {}
-    DATASOURCES_AUDIT = {}
-    SCHEMAS_AUDIT = {}
-    TABLES_AUDIT = {}
-    COLUMNS_AUDIT = {}
-    METRICS_AUDIT = {}
-    MONITORS_AUDIT = {}
-    ORPHANED_METRICS = {}
+    WORKSPACES_AUDIT = []
+    DATASOURCES_AUDIT = []
+    SCHEMAS_AUDIT = []
+    TABLES_AUDIT = []
+    COLUMNS_AUDIT = []
+    METRICS_AUDIT = []
+    MONITORS_AUDIT = []
+    ORPHANED_METRICS = []
+    USERS_AUDIT = []
+    DASHBOARDS_AUDIT = []
+    W_USERS_AUDIT = []
+    
+    #### GET APPLICATION USERS
+    print('GETTING APPLICATION USER INFO')
+    users_url = f'{SERVER}/api/v0/users'
+    get_users_response = json.loads(requests.request("GET", users_url, headers=headers).text)
+    for users in get_users_response:
+        if users.get('created_at') is not None and datetime.fromtimestamp(users.get('created_at')) >= LAST_DAY:
+            USERS_AUDIT.append(["NONE", "APP USER", "CREATION", str(users.get('username')), datetime.fromtimestamp(users.get('created_at')), "NONE"])
     
     #### GET WORKSPACES FOR AUDIT USAGE
     print('GETTING WORKSPACE INFO')
     workspaces_url = f'{BASE_URL}/workspaces'
     get_workspaces_response = json.loads(requests.request("GET", workspaces_url, headers=headers).text)
     
-    for w in get_workspaces_response.get('data'):
+    #### CHECK FOR RECENT WORKSPACE CREATION
+    for wksp in get_workspaces_response.get('data'):
         #### ADD WORKSPACE UUID FOR SCHEMA, TABLE, COLUMN, METRIC AUDITING
-        workspaces[str(w.get('name'))] = str(w.get('uuid'))
-        
-        #### CHECK FOR RECENT WORKSPACE CREATION
-        if w.get('created_at') is not None and datetime.fromtimestamp(w.get('created_at')) >= LAST_DAY:
-            WORKSPACES_AUDIT[str(w.get('name'))] = str(w.get('created_at'))
-
+        workspaces[str(wksp.get('name'))] = str(wksp.get('uuid'))
+        if wksp.get('created_at') is not None and datetime.fromtimestamp(wksp.get('created_at')) >= LAST_DAY:
+            WORKSPACES_AUDIT.append([str(wksp.get('name')), "WORKSPACE", "CREATION", str(wksp.get('name')), str(wksp.get('created_at')), "NONE"])
+            
     for wksp in workspaces:
+        #### USERS
+        print(f'GETTING USERS INFORMATION FOR {wksp}')
+        wksp_users_list_url = f'{SERVER}/api/v0/ws/{workspaces[wksp]}/users'
+        get_wksp_users_response = json.loads(requests.request("GET", wksp_users_list_url, headers=headers).text)
+        for wksp_user in get_wksp_users_response:
+            if wksp_user.get('created_at') is not None and datetime.fromtimestamp(wksp_user.get('created_at')) >= LAST_DAY:
+                W_USERS_AUDIT.append([wksp, "WORKSPACE USER", "CREATION", str(wksp_user.get('username')), str(datetime.fromtimestamp(wksp_user.get('created_at'))), f"ROLE - {wksp_user.get('role')}"])
+        
+        #### DATASOURCES
         print(f'GETTING DATASOURCE INFORMATION FOR {wksp}')
         datasources_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources'
         get_datasources_response = json.loads(requests.request("GET", datasources_list_url, headers=headers).text)
         
-        #### DATASOURCES
         for g in get_datasources_response:
             #### GET UNIQUE DATASOURCE INFORMATION
             source_uuid = g.get('metadata', {}).get('uuid')
@@ -64,13 +81,11 @@ def daily_audit(headers):
             
             #### CHECK FOR RECENT DATASOURCE CREATION
             if g.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(g.get('status', {}).get('createdTs')) >= LAST_DAY:
-                DATASOURCES_AUDIT[str(g.get('metadata', {}).get('name'))] = str(g.get('status', {}).get('createdTs'))
-                DATASOURCES_AUDIT['created_by'] = str(g.get('metadata', {}).get('ownedBy', {}).get('username'))
+                DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "CREATION", str(g.get('metadata', {}).get('name')), str(g.get('status', {}).get('createdTs')), str(g.get('metadata', {}).get('ownedBy', {}).get('username'))])
             
             #### CHECK FOR RECENT DATASOURCE UPDATES
             if g.get('status', {}).get('configUpdatedTs') is not None and datetime.fromtimestamp(g.get('status', {}).get('configUpdatedTs')) >= LAST_DAY:
-                DATASOURCES_AUDIT[str(g.get('metadata', {}).get('name'))] = str(g.get('status', {}).get('configUpdatedTs'))
-                DATASOURCES_AUDIT['update_by'] = str(g.get('metadata', {}).get('updatedBy', {}).get('username'))
+                DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "UPDATE", str(g.get('metadata', {}).get('name')), str(g.get('status', {}).get('configUpdatedTs')), str(g.get('metadata', {}).get('updatedBy', {}).get('username'))])
             
             print(f'GETTING SCHEMA INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
             #### SCHEMAS
@@ -81,20 +96,13 @@ def daily_audit(headers):
             for schema in get_schema_response.get('data'):
                 #### CHECK FOR REMOVED SCHEMAS
                 if schema.get('removedTs') is not None and datetime.fromtimestamp(schema.get('removedTs')) >= LAST_DAY:
-                    SCHEMAS_AUDIT['ACTION'] = ['SCHEMA REMOVED FROM SOURCE']
-                    SCHEMAS_AUDIT[str(schema.get('name'))] = str(datetime.fromtimestamp(schema.get('removedTs')))
-                
-                #### CHECK FOR ENABLED SCHEMAS
-                if schema.get('lastTablesScannedTs') is not None and datetime.fromtimestamp(schema.get('lastTablesScannedTs')) >= LAST_DAY:
-                    SCHEMAS_AUDIT['ACTION'] = ['SCHEMA ENABLED']
-                    SCHEMAS_AUDIT[str(schema.get('name'))] = str(datetime.fromtimestamp(schema.get('lastTablesScannedTs')))
+                    SCHEMAS_AUDIT.append([wksp, "SCHEMA", "REMOVED", str(schema.get('name')), str(datetime.fromtimestamp(schema.get('removedTs'))), "NONE"])
                 
                 #### CHECK FOR NEW SCHEMAS
                 if schema.get('firstSeenTs') is not None and datetime.fromtimestamp(schema.get('firstSeenTs')) >= LAST_DAY:
-                    SCHEMAS_AUDIT['ACTION'] = ['NEW SCHEMA FOUND']
-                    SCHEMAS_AUDIT[str(schema.get('name'))] = str(datetime.fromtimestamp(schema.get('firstSeenTs')))
+                    SCHEMAS_AUDIT.append([wksp, "SCHEMA", "DISCOVERED", str(schema.get('name')), str(datetime.fromtimestamp(schema.get('firstSeenTs'))), "NONE"])
             
-            #### CREATE TABLES SEPARATOR
+            #### LOOP THROUGH TABLES
             print(f'GETTING TABLE INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
             tables_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/tables'
             get_tables_response = json.loads(requests.request("GET", tables_list_url, headers=headers).text)
@@ -106,73 +114,151 @@ def daily_audit(headers):
                 table_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/profile/tables/{table}'
                 get_table_response = json.loads(requests.request("GET", table_list_url, headers=headers).text)
                 #### ADD NEW TABLES
-                if get_table_response.get('firstSeenTs') is not None and datetime.fromtimestamp(get_table_response.get('firstSeenTs')) >= LAST_DAY:
-                    TABLES_AUDIT[get_table_response.get('tableName')] = str(datetime.fromtimestamp(get_table_response.get('firstSeenTs')))
-                
+                if g.get('firstSeenTs') is not None and datetime.fromtimestamp(g.get('firstSeenTs')) >= LAST_DAY:
+                    TABLES_AUDIT.append([wksp, "TABLE", "DISCOVERED", str(g.get('tableName')), str(datetime.fromtimestamp(get_table_response.get('firstSeenTs'))), "NONE"])
+            
                 #### GET COLUMN API URL
                 column_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/profile/tables/{table}/columns'
                 get_column_response = json.loads(requests.request("GET", column_list_url, headers=headers).text)
-                
                 #### LOOP THROUGH COLUMNS
                 for c in get_column_response:
                     if c.get('firstSeenTs') is not None and datetime.fromtimestamp(c.get('firstSeenTs')) >= LAST_DAY:
-                        COLUMNS_AUDIT[c.get('columnName')] = str(datetime.fromtimestamp(c.get('firstSeenTs')))
+                        COLUMNS_AUDIT.append([wksp, "COLUMN", "DISCOVERED", str(c.get('columnName')), str(datetime.fromtimestamp(c.get('firstSeenTs'))), "NONE"])
             
-            #### CREATE METRICS SEPARATOR
-            print(f'GETTING METRIC INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
-            metrics_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/metrics'
-            get_metrics_response = json.loads(requests.request("GET", metrics_list_url, headers=headers).text)
-            
-            #### STORE METRICS FOR MONITOR COMPARISON
-            metric_dict = {}
-            metrics_set = set()
-            
-            #### LOOP THROUGH METRICS
-            for metric in get_metrics_response:
-                if metric.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY:
-                    METRICS_AUDIT['METRIC'] = str(metric.get('metadata', {}).get('name')) + ' - ' + str(metric.get('metadata', {}).get('uuid'))
-                    METRICS_AUDIT['CREATED BY'] = str(metric.get('metadata', {}).get('ownedBy', {}).get('username'))
-                    
-                metrics_set.add(str(metric.get('metadata', {}).get('uuid')))
-                metric_dict[str(metric.get('metadata', {}).get('uuid'))] = metric.get('status', {}).get('createdTs')
+            #### STORE MONITORS FOR METRIC COMPARISON
+            monitors_set = set()
             
             #### CREATE MONITORS SEPARATOR
             print(f'GETTING MONITOR INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
             monitors_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/monitors'
             get_monitors_response = json.loads(requests.request("GET", monitors_list_url, headers=headers).text)
-            
-            #### STORE MONITORS FOR METRIC COMPARISON
-            monitors_set = set()
-            
+                
             #### LOOP THROUGH MONITORS
             for monitor in get_monitors_response.get('data'):
-                if monitor.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(monitor.get('status', {}).get('createdTs')) >= LAST_DAY:
-                    MONITORS_AUDIT['MONITOR'] = str(monitor.get('metadata', {}).get('name')) + ' - ' + str(monitor.get('metadata', {}).get('uuid'))
-                    MONITORS_AUDIT['CREATED BY'] = str(monitor.get('metadata', {}).get('ownedBy', {}).get('username'))
+                created = int(monitor.get('status', {}).get('createdTs'))
+                updated = int(monitor.get('status', {}).get('configUpdatedTs'))
+                if monitor.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(monitor.get('status', {}).get('createdTs')) >= LAST_DAY and created >= updated:
+                    MONITORS_AUDIT.append([wksp, "MONITOR", "CREATED", str(monitor.get('metadata', {}).get('name')), str(datetime.fromtimestamp(monitor.get('status', {}).get('createdTs'))), str(monitor.get('metadata', {}).get('ownedBy', {}).get('username'))])
+                
+                if monitor.get('status', {}).get('configUpdatedTs') is not None and datetime.fromtimestamp(monitor.get('status', {}).get('configUpdatedTs')) >= LAST_DAY and created < updated:
+                    MONITORS_AUDIT.append([wksp, "MONITOR", "UPDATED", str(monitor.get('metadata', {}).get('name')), str(datetime.fromtimestamp(monitor.get('status', {}).get('configUpdatedTs'))), str(monitor.get('metadata', {}).get('updatedBy', {}).get('username'))])
                 
                 monitors_set.add(str(monitor.get('metadata', {}).get('uuid')))
             
-            final_set = metrics_set - monitors_set
+            #### LOOP THROUGH METRICS
+            print(f'GETTING METRIC INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
+            metrics_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/metrics'
+            get_metrics_response = json.loads(requests.request("GET", metrics_list_url, headers=headers).text)
+                            
+            for metric in get_metrics_response:
+                created = int(metric.get('status', {}).get('createdTs'))
+                updated = int(metric.get('status', {}).get('configUpdatedTs'))
+                if metric.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY and created >= updated:
+                    MONITORS_AUDIT.append([wksp, "METRIC", "CREATED", str(metric.get('metadata', {}).get('name')), str(datetime.fromtimestamp(metric.get('status', {}).get('createdTs'))), str(metric.get('metadata', {}).get('ownedBy', {}).get('username'))])
+                if metric.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY and created < updated:
+                    MONITORS_AUDIT.append([wksp, "METRIC", "UPDATED", str(metric.get('metadata', {}).get('name')), str(datetime.fromtimestamp(metric.get('status', {}).get('configUpdatedTs'))), str(metric.get('metadata', {}).get('updatedBy', {}).get('username'))])
                 
-            for m in final_set:
-                now = datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
-                mdt = datetime.fromtimestamp(metric_dict[m])
-                diff = now - mdt
-                hour_diff = (diff.days * 24) + (diff.seconds // 3600)
-                if hour_diff > 24:
-                    ORPHANED_METRICS[m] = f'{hour_diff} hours orphand'
+                if metric.get('metadata', {}).get('uuid') not in monitors_set:
+                    now = datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
+                    mdt = datetime.fromtimestamp(metric.get('status', {}).get('createdTs'))
+                    diff = now - mdt
+                    hour_diff = (diff.days * 24) + (diff.seconds // 3600)
+                    if hour_diff > 24:
+                        ORPHANED_METRICS.append([str(metric.get('metadata', {}).get('name')), str(metric.get('metadata', {}).get('ownedBy', {}).get('username')), str(datetime.fromtimestamp(metric.get('status', {}).get('createdTs')))])
     
-    AUDIT_LIST['WORKSPACES'] = (WORKSPACES_AUDIT if len(WORKSPACES_AUDIT) > 0 else 'NO WORKSPACE CHANGES')
-    AUDIT_LIST['DATASOURCES'] = (DATASOURCES_AUDIT if len(DATASOURCES_AUDIT) > 0 else 'NO DATASOURCE CHANGES')
-    AUDIT_LIST['SCHEMAS'] = (SCHEMAS_AUDIT if len(SCHEMAS_AUDIT) > 0 else 'NO SCHEMA CHANGES')
-    AUDIT_LIST['TABLES'] = (TABLES_AUDIT if len(TABLES_AUDIT) > 0 else 'NO TABLE CHANGES')
-    AUDIT_LIST['COLUMNS'] = (COLUMNS_AUDIT if len(COLUMNS_AUDIT) > 0 else 'NO COLUMN CHANGES')
-    AUDIT_LIST['METRIC'] = (METRICS_AUDIT if len(METRICS_AUDIT) > 0 else 'NO METRIC CHANGES')
-    AUDIT_LIST['MONITORS'] = (MONITORS_AUDIT if len(MONITORS_AUDIT) > 0 else 'NO MONITOR CHANGES')
-    AUDIT_LIST['ORPHANED METRICS'] = (ORPHANED_METRICS if len(ORPHANED_METRICS) > 0 else 'NO ORPHANED METRICS')
+    AUDIT_LIST = []
+    if len(WORKSPACES_AUDIT) > 0:
+        for wa in WORKSPACES_AUDIT:
+            AUDIT_LIST.append(wa)
+    if len(DATASOURCES_AUDIT) > 0:
+        for da in DATASOURCES_AUDIT:
+            AUDIT_LIST.append(da)
+    if len(SCHEMAS_AUDIT) > 0:
+        for sa in SCHEMAS_AUDIT:
+            AUDIT_LIST.append(sa)
+    if len(TABLES_AUDIT) > 0:
+        for ta in TABLES_AUDIT:
+            AUDIT_LIST.append(ta)
+    if len(COLUMNS_AUDIT) > 0:
+        for ca in COLUMNS_AUDIT:
+            AUDIT_LIST.append(ca)
+    if len(METRICS_AUDIT) > 0:
+        for meta in METRICS_AUDIT:
+            AUDIT_LIST.append(meta)
+    if len(MONITORS_AUDIT) > 0:
+        for mona in MONITORS_AUDIT:
+            AUDIT_LIST.append(mona)
+    if len(USERS_AUDIT) > 0:
+        for ua in USERS_AUDIT:
+            AUDIT_LIST.append(ua)
+    if len(W_USERS_AUDIT) > 0:
+        for wua in W_USERS_AUDIT:
+            AUDIT_LIST.append(wua)
+    if len(DASHBOARDS_AUDIT) > 0:
+        for dasha in DASHBOARDS_AUDIT:
+            AUDIT_LIST.append(dasha)
     
-    with open("audit_output.json", "w") as audit_file:
-        json.dump(AUDIT_LIST, audit_file)
+    with xl.Workbook("./audit_output.xlsx") as workbook:
+        if len(AUDIT_LIST) > 0:
+            fields = ["WORKSPACE", "OBJECT", "EVENT", "OBJECT NAME", "EVENT TIME", "USER NAME"]
+            row = 1
+            audit_worksheet = workbook.add_worksheet('AUDIT')
+            audit_worksheet.write_row(0, 0, fields)
+            for al in AUDIT_LIST:
+                audit_worksheet.write_row(row, 0, al)
+                row += 1
+        
+        if len(ORPHANED_METRICS) > 0:
+            fields = ["METRIC NAME", "CREATED BY", "CREATED AT"]
+            row = 1
+            orphaned_worksheet = workbook.add_worksheet('ORPHANS')
+            orphaned_worksheet.write_row(0, 0, fields)
+            for om in ORPHANED_METRICS:
+                orphaned_worksheet.write_row(row, 0, om)
+                row += 1
+
+################## GET APPLICATION USERS ###################
+# APPLICATION USERS ARE LISTED
+# PRINTS USERNAME
+# PRINTS EMAIL
+# PRINTS NAME
+# PRINTS CREATED AT
+# PRINTS LAST LOGIN
+# PRINTS APPLICATION ROLE
+
+def get_app_users_info(headers):
+    users_url = f'{SERVER}/api/v0/users'
+    get_users_response = json.loads(requests.request("GET", users_url, headers=headers).text)
+    for u in get_users_response:
+        print(f"""
+User: {str(u.get('username'))}
+Email: {str(u.get('email'))}
+Name: {str(u.get('first_name'))} {str(u.get('last_name'))}
+Created At: {str(datetime.fromtimestamp(u.get('created_at')))}
+Last Login: {str(datetime.fromtimestamp(u.get('last_login')))}
+Application Role: {str(u.get('app_role'))}
+""")
+        
+################## GET WORKSPACE USERS ##################
+# WORKSPACE USERS ARE LISTED
+# PRINTS USERNAME
+# PRINTS EMAIL
+# PRINTS NAME
+# PRINTS CREATED AT
+# PRINTS LAST LOGIN
+# PRINTS APPLICATION ROLE
+def get_wksp_users_info(headers, workspace):
+    users_list_url = f'{SERVER}/api/v0/ws/{workspace}/users'
+    get_users_response = json.loads(requests.request("GET", users_list_url, headers=headers).text)
+    for u in get_users_response:
+        print(f"""
+User: {str(u.get('username'))}
+Email: {str(u.get('email'))}
+Name: {str(u.get('first_name'))} {str(u.get('last_name'))}
+Created At: {str(datetime.fromtimestamp(u.get('created_at')))}
+Last Login: {str(datetime.fromtimestamp(u.get('last_login')))}
+Workspace Role: {str(u.get('role'))}
+""")
 
 ################## GET WORKSPACE ##################
 # USER SELECTS WORKSPACE FROM LIST
@@ -194,7 +280,8 @@ def get_workspace_info(headers):
         workspaces[w['name']] = w['uuid']
     
     ### Add EXIT row to dict
-    workspaces['EXIT'] = ['EXIT']
+    workspaces['USERS'] = 'USERS'
+    workspaces['EXIT'] = 'EXIT'
 
     ### Ask user for desired results
     workspace_list = [
@@ -212,6 +299,11 @@ def get_workspace_info(headers):
     ### Exit route
     if workspace_choice.get('wksp') == 'EXIT':
         exit()
+    
+    if workspace_choice.get('wksp') == 'USERS':
+        get_app_users_info(HEADERS)
+        workspace_choice = inquirer.prompt(workspace_list)
+        workspace = workspaces.get(workspace_choice.get('wksp'))
     else:
         ### Print Workspace details
         workspace_url = f'{BASE_URL}/workspaces/{workspace}'
@@ -247,7 +339,8 @@ def get_datasource_info(headers, workspace):
         datasources[d['metadata']['name']] = d['metadata']['uuid']
 
     ### Add an EXIT route to the dict
-    datasources['EXIT'] = ['EXIT']
+    datasources['USERS'] = 'USERS'
+    datasources['EXIT'] = 'EXIT'
     
     ### Show selection of datasources
     source_list = [
@@ -266,6 +359,9 @@ def get_datasource_info(headers, workspace):
     ### Exit route
     if source_choice['ds'] == 'EXIT':
         exit()
+        
+    if source_choice['ds'] == 'USERS':
+        get_wksp_users_info(headers, workspace)
 
     ### Datasource URL to pass to the Get Details function
     datasource_url = f'{datasources_list_url}/{datasource}'
@@ -275,18 +371,20 @@ def get_datasource_info(headers, workspace):
     ds_type = datasource_details.get('config', {}).get('connection', {}).get('type')
     
     ### Print generic datasource details
+    created = ('None' if datasource_details.get('status', {}).get('createdTs') is None else datetime.fromtimestamp(datasource_details.get('status', {}).get('createdTs')))
+    scanned = ('None' if datasource_details.get('status', {}).get('createdTs') is None else datetime.fromtimestamp(datasource_details.get('status', {}).get('lastScannedTs')))
     print(f"""
 Datasource Name: {str(datasource_details.get('metadata', {}).get('name'))}
 Datasource Type: {str(datasource_details.get('config', {}).get('connection', {}).get('type'))}
 Owner: {str(datasource_details.get('metadata', {}).get('ownedBy', {}).get('email', datasource_details.get('metadata', {}).get('updatedBy', {}).get('email')))}
-Created At: {str(datetime.fromtimestamp(datasource_details.get('status', {}).get('createdTs')))}
+Created At: {str(created)}
 Profiling Enabled: {str(datasource_details.get('config', {}).get('isLive'))}
 Datasource Tags: {str(datasource_details.get('metadata', {}).get('tags'))}""")
     if str(datasource_details.get('status', {}).get('lastScannedStatus')) == 'success':
-        print("Successful Last Scan: " + str(datetime.fromtimestamp(datasource_details.get('status', {}).get('lastScannedTs'))))
+        print("Successful Last Scan: " + str(scanned))
     else:
         print(f"""
-Last Scan Failed At: {str(datetime.fromtimestamp(datasource_details.get('status', {}).get('lastScannedTs')))}
+Last Scan Failed At: {str(scanned)}
 Last Scan Fail Reason: {str(datasource_details.get('status', {}).get('lastScannedFailedReason'))}""")
 
     if ds_type == 'postgres':
