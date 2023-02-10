@@ -38,6 +38,7 @@ def daily_audit(headers):
     ORPHANED_METRICS = []
     USERS_AUDIT = []
     DASHBOARDS_AUDIT = []
+    INCIDENTS_AUDIT = []
     W_USERS_AUDIT = []
     
     #### GET APPLICATION USERS
@@ -68,6 +69,20 @@ def daily_audit(headers):
         for wksp_user in get_wksp_users_response:
             if wksp_user.get('created_at') is not None and datetime.fromtimestamp(wksp_user.get('created_at')) >= LAST_DAY:
                 W_USERS_AUDIT.append([wksp, "WORKSPACE USER", "CREATION", str(wksp_user.get('username')), str(datetime.fromtimestamp(wksp_user.get('created_at'))), f"ROLE - {wksp_user.get('role')}"])
+        
+        #### INCIDENTS
+        print(f'GETTING INCIDENT INFORMATION FOR {wksp}')
+        wksp_incident_list_url = f'{SERVER}/api/v0/ws/{workspaces[wksp]}/incidents'
+        get_wksp_incident_response = json.loads(requests.request("GET", wksp_incident_list_url, headers=headers).text).get('data')
+        for inc in get_wksp_incident_response:
+            i_created = int(inc.get('creation_ts')) if inc.get('creation_ts') is not None else 0
+            i_updated = int(inc.get('updated_ts')) if inc.get('updated_ts') is not None else 0
+            if i_created >= i_updated:
+                if datetime.fromtimestamp(inc.get('creation_ts')) >= LAST_DAY:
+                    INCIDENTS_AUDIT.append([wksp, "INCIDENT", "CREATED", str(inc.get('id')), str(datetime.fromtimestamp(inc.get('creation_ts'))), str(inc.get('incident_type'))])
+            else:
+                if datetime.fromtimestamp(inc.get('updated_ts')) >= LAST_DAY:
+                    INCIDENTS_AUDIT.append([wksp, "INCIDENT", "UPDATED", str(inc.get('id')), str(datetime.fromtimestamp(inc.get('updated_ts'))), str(inc.get('incident_type'))])
         
         #### DATASOURCES
         print(f'GETTING DATASOURCE INFORMATION FOR {wksp}')
@@ -135,13 +150,14 @@ def daily_audit(headers):
                 
             #### LOOP THROUGH MONITORS
             for monitor in get_monitors_response.get('data'):
-                created = int(monitor.get('status', {}).get('createdTs'))
-                updated = int(monitor.get('status', {}).get('configUpdatedTs'))
-                if monitor.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(monitor.get('status', {}).get('createdTs')) >= LAST_DAY and created >= updated:
-                    MONITORS_AUDIT.append([wksp, "MONITOR", "CREATED", str(monitor.get('metadata', {}).get('name')), str(datetime.fromtimestamp(monitor.get('status', {}).get('createdTs'))), str(monitor.get('metadata', {}).get('ownedBy', {}).get('username'))])
-                
-                if monitor.get('status', {}).get('configUpdatedTs') is not None and datetime.fromtimestamp(monitor.get('status', {}).get('configUpdatedTs')) >= LAST_DAY and created < updated:
-                    MONITORS_AUDIT.append([wksp, "MONITOR", "UPDATED", str(monitor.get('metadata', {}).get('name')), str(datetime.fromtimestamp(monitor.get('status', {}).get('configUpdatedTs'))), str(monitor.get('metadata', {}).get('updatedBy', {}).get('username'))])
+                created = int(monitor.get('status', {}).get('createdTs')) if monitor.get('status', {}).get('createdTs') is not None else 0
+                updated = int(monitor.get('status', {}).get('configUpdatedTs')) if monitor.get('status', {}).get('configUpdatedTs') is not None else 0
+                if created >= updated:
+                    if datetime.fromtimestamp(monitor.get('status', {}).get('createdTs')) >= LAST_DAY:
+                        MONITORS_AUDIT.append([wksp, "MONITOR", "CREATED", str(monitor.get('metadata', {}).get('name')), str(datetime.fromtimestamp(monitor.get('status', {}).get('createdTs'))), str(monitor.get('metadata', {}).get('ownedBy', {}).get('username'))])
+                else:
+                    if datetime.fromtimestamp(monitor.get('status', {}).get('configUpdatedTs')) >= LAST_DAY:
+                        MONITORS_AUDIT.append([wksp, "MONITOR", "UPDATED", str(monitor.get('metadata', {}).get('name')), str(datetime.fromtimestamp(monitor.get('status', {}).get('configUpdatedTs'))), str(monitor.get('metadata', {}).get('updatedBy', {}).get('username'))])
                 
                 monitors_set.add(str(monitor.get('metadata', {}).get('uuid')))
             
@@ -151,12 +167,14 @@ def daily_audit(headers):
             get_metrics_response = json.loads(requests.request("GET", metrics_list_url, headers=headers).text)
                             
             for metric in get_metrics_response:
-                created = int(metric.get('status', {}).get('createdTs'))
-                updated = int(metric.get('status', {}).get('configUpdatedTs'))
-                if metric.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY and created >= updated:
-                    MONITORS_AUDIT.append([wksp, "METRIC", "CREATED", str(metric.get('metadata', {}).get('name')), str(datetime.fromtimestamp(metric.get('status', {}).get('createdTs'))), str(metric.get('metadata', {}).get('ownedBy', {}).get('username'))])
-                if metric.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY and created < updated:
-                    MONITORS_AUDIT.append([wksp, "METRIC", "UPDATED", str(metric.get('metadata', {}).get('name')), str(datetime.fromtimestamp(metric.get('status', {}).get('configUpdatedTs'))), str(metric.get('metadata', {}).get('updatedBy', {}).get('username'))])
+                created = int(metric.get('status', {}).get('createdTs')) if metric.get('status', {}).get('createdTs') is not None else 0
+                updated = int(metric.get('status', {}).get('configUpdatedTs')) if metric.get('status', {}).get('configUpdatedTs') is not None else 0
+                if created >= updated:
+                    if datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY:
+                        MONITORS_AUDIT.append([wksp, "METRIC", "CREATED", str(metric.get('metadata', {}).get('name')), str(datetime.fromtimestamp(metric.get('status', {}).get('createdTs'))), str(metric.get('metadata', {}).get('ownedBy', {}).get('username'))])
+                else:
+                    if datetime.fromtimestamp(metric.get('status', {}).get('configUpdatedTs')) >= LAST_DAY:
+                        MONITORS_AUDIT.append([wksp, "METRIC", "UPDATED", str(metric.get('metadata', {}).get('name')), str(datetime.fromtimestamp(metric.get('status', {}).get('configUpdatedTs'))), str(metric.get('metadata', {}).get('updatedBy', {}).get('username'))])
                 
                 if metric.get('metadata', {}).get('uuid') not in monitors_set:
                     now = datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
@@ -197,6 +215,9 @@ def daily_audit(headers):
     if len(DASHBOARDS_AUDIT) > 0:
         for dasha in DASHBOARDS_AUDIT:
             AUDIT_LIST.append(dasha)
+    if len(INCIDENTS_AUDIT) > 0:
+        for ia in INCIDENTS_AUDIT:
+            AUDIT_LIST.append(ia)
     
     with xl.Workbook("./audit_output.xlsx") as workbook:
         if len(AUDIT_LIST) > 0:
