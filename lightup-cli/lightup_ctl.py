@@ -1,7 +1,29 @@
-import requests, json, inquirer, xlsxwriter as xl
+##########################################################################################
+# NAME: Lightup Control
+# VERSION: 0.5.0
+# DESCRIPTION:
+# This Lightup CLI is intended for auditing and exploring purposes of Lightup
+# which is based on the role associated to the API token supplied to the CLI.
+#
+# AUTHOR: Bryan "sneakyaneurism" Feuling
+#
+# NOTICE OF USAGE, RIGHTS, AND RESPONSIBILITY:
+# This code is provided as an open source Lightup CLI and is not supported by Lightup.
+# Lightup, or the author, are not responsible for any harm it may cause, including the
+# unrecoverable corruption of a Lightup instance. It is recommended that modifications 
+# to this code and production use by Lightup users only be done with the user's
+# understanding as to what the code is doing and the intended outcome of the CLI.
+#
+##########################################################################################
+
+import requests, json, inquirer, xlsxwriter as xl, concurrent.futures as cf
 from datetime import datetime, timedelta
 
 ################## GET ACCESS TOKEN ##################
+# This section gets the Refresh Token from the
+# API Credential doc from Lightup and gets the
+# access token for the rest of the CLI to use
+
 f = open('./lightup-api-credential.json')
 data = json.load(f)
 
@@ -20,10 +42,13 @@ HEADERS = {
     "Accept": "application/json"
 }
 
+################## AUDITING ##################
+# This function will execute a full audit
+# of all changes for the past day and output
+# the results in an Excel document for more
+# exploration
+
 def daily_audit(headers):
-    #### AUDIT_LIST DICT IS FOR AUDIT READOUT
-    #### WORKSPACES ARRAY IS FOR OBJECT LOOPING
-    #### LAST_DAY VAR IS FOR COMPARISON
     print('RUNNING AUDIT')
     print('THIS CAN TAKE A FEW MINUTES')
     workspaces = {}
@@ -41,150 +66,212 @@ def daily_audit(headers):
     INCIDENTS_AUDIT = []
     W_USERS_AUDIT = []
     
+    #### VALIDATE TIMESTAMP
+    def validate_time(x):
+        if x is not None and datetime.fromtimestamp(x) >= LAST_DAY:
+            return True
+    
     #### GET APPLICATION USERS
     print('GETTING APPLICATION USER INFO')
-    users_url = f'{SERVER}/api/v0/users'
-    get_users_response = json.loads(requests.request("GET", users_url, headers=headers).text)
-    for users in get_users_response:
-        if users.get('created_at') is not None and datetime.fromtimestamp(users.get('created_at')) >= LAST_DAY:
-            USERS_AUDIT.append(["NONE", "APP USER", "CREATION", str(users.get('username')), datetime.fromtimestamp(users.get('created_at')), "NONE"])
+    get_users_response = json.loads(requests.request("GET", f'{SERVER}/api/v0/users', headers=headers).text)
     
-    #### GET WORKSPACES FOR AUDIT USAGE
+    #### APPLICATION USER EVAL FUNCTION FOR MULTITHREADING
+    def app_usr_eval(x):
+        if validate_time(x.get('created_at')) == True:
+            USERS_AUDIT.append(["NONE", "APP USER", "CREATION", str(x.get('username')), datetime.fromtimestamp(x.get('created_at')), "NONE"])
+    
+    with cf.ThreadPoolExecutor() as au_exec:
+        app_users = [au_exec.submit(app_usr_eval, au) for au in get_users_response]
+        for app_user in app_users:
+            app_user.result()
+    
+    #### GET WORKSPACES INFORMATION
     print('GETTING WORKSPACE INFO')
-    workspaces_url = f'{BASE_URL}/workspaces'
-    get_workspaces_response = json.loads(requests.request("GET", workspaces_url, headers=headers).text)
+    get_workspaces_response = json.loads(requests.request("GET", f'{BASE_URL}/workspaces', headers=headers).text)['data']
     
-    #### CHECK FOR RECENT WORKSPACE CREATION
-    for wksp in get_workspaces_response.get('data'):
+    #### WORKSPACE EVAL FUNCTION FOR MULTITHREADING
+    def wksp_eval(x):
+        workspaces[str(x.get('name'))] = str(x.get('uuid'))
+        if validate_time(x.get('created_at')) == True:
         #### ADD WORKSPACE UUID FOR SCHEMA, TABLE, COLUMN, METRIC AUDITING
-        workspaces[str(wksp.get('name'))] = str(wksp.get('uuid'))
-        if wksp.get('created_at') is not None and datetime.fromtimestamp(wksp.get('created_at')) >= LAST_DAY:
-            WORKSPACES_AUDIT.append([str(wksp.get('name')), "WORKSPACE", "CREATION", str(wksp.get('name')), str(wksp.get('created_at')), "NONE"])
+            WORKSPACES_AUDIT.append([str(x.get('name')), "WORKSPACE", "CREATION", str(x.get('name')), str(x.get('created_at')), "NONE"])
+        
+    with cf.ThreadPoolExecutor() as wksp_exec:
+        wksp_results = [wksp_exec.submit(wksp_eval, wr) for wr in get_workspaces_response]
+        for wksp_result in cf.as_completed(wksp_results):
+            wksp_result.result()
             
     for wksp in workspaces:
-        #### USERS
+        #### GET WORKSPACE USER INFORMATION
         print(f'GETTING USERS INFORMATION FOR {wksp}')
-        wksp_users_list_url = f'{SERVER}/api/v0/ws/{workspaces[wksp]}/users'
-        get_wksp_users_response = json.loads(requests.request("GET", wksp_users_list_url, headers=headers).text)
+        get_wksp_users_response = json.loads(requests.request("GET", f'{SERVER}/api/v0/ws/{workspaces[wksp]}/users', headers=headers).text)
+        
+        #### WORKSPACE USER EVAL FUNCTION FOR MULTITHREADING
+        def user_eval(x):
+            if validate_time(x.get('created_at')) == True:
+                W_USERS_AUDIT.append([wksp, "WORKSPACE USER", "CREATION", str(x.get('username')), str(datetime.fromtimestamp(x.get('created_at'))), f"ROLE - {str(x.get('role'))}"])
+        
+        with cf.ThreadPoolExecutor() as user_exec:
+            usr_results = [user_exec.submit(incident_eval, wu) for wu in get_wksp_users_response]
+            for usr_result in cf.as_completed(usr_results):
+                usr_result.result()
+            
         for wksp_user in get_wksp_users_response:
-            if wksp_user.get('created_at') is not None and datetime.fromtimestamp(wksp_user.get('created_at')) >= LAST_DAY:
-                W_USERS_AUDIT.append([wksp, "WORKSPACE USER", "CREATION", str(wksp_user.get('username')), str(datetime.fromtimestamp(wksp_user.get('created_at'))), f"ROLE - {wksp_user.get('role')}"])
+            user_eval(wksp_user)
+            
+        #### STORE MONITORS FOR METRIC COMPARISON
+        monitors_set = set()
         
-        #### INCIDENTS
-        print(f'GETTING INCIDENT INFORMATION FOR {wksp}')
-        wksp_incident_list_url = f'{SERVER}/api/v0/ws/{workspaces[wksp]}/incidents'
-        get_wksp_incident_response = json.loads(requests.request("GET", wksp_incident_list_url, headers=headers).text).get('data')
-        for inc in get_wksp_incident_response:
-            i_created = int(inc.get('creation_ts')) if inc.get('creation_ts') is not None else 0
-            i_updated = int(inc.get('updated_ts')) if inc.get('updated_ts') is not None else 0
-            if i_created >= i_updated:
-                if datetime.fromtimestamp(inc.get('creation_ts')) >= LAST_DAY:
-                    INCIDENTS_AUDIT.append([wksp, "INCIDENT", "CREATED", str(inc.get('id')), str(datetime.fromtimestamp(inc.get('creation_ts'))), str(inc.get('incident_type'))])
+        #### GET WORKSPACE MONITOR INFORMATION
+        print(f'GETTING MONITOR INFORMATION FOR WORKSPACE {wksp}')
+        get_monitors_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/monitors', headers=headers).text)['data']
+        
+        #### WORKSPACE MONITORS EVAL FUNCTION FOR MULTITHREADING
+        def monitor_eval(x):
+            created = int(x.get('status', {}).get('createdTs')) if x.get('status', {}).get('createdTs') is not None else 0
+            updated = int(x.get('status', {}).get('configUpdatedTs')) if x.get('status', {}).get('configUpdatedTs') is not None else 0
+            if created >= updated:
+                if validate_time(x.get('status', {}).get('createdTs')) == True:
+                    MONITORS_AUDIT.append([wksp, "MONITOR", "CREATED", str(x.get('metadata', {}).get('name')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs'))), str(x.get('metadata', {}).get('ownedBy', {}).get('username'))])
             else:
-                if datetime.fromtimestamp(inc.get('updated_ts')) >= LAST_DAY:
-                    INCIDENTS_AUDIT.append([wksp, "INCIDENT", "UPDATED", str(inc.get('id')), str(datetime.fromtimestamp(inc.get('updated_ts'))), str(inc.get('incident_type'))])
+                if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
+                    MONITORS_AUDIT.append([wksp, "MONITOR", "UPDATED", str(x.get('metadata', {}).get('name')), str(datetime.fromtimestamp(x.get('status', {}).get('configUpdatedTs'))), str(x.get('metadata', {}).get('updatedBy', {}).get('username'))])
+            
+            monitors_set.add(str(x.get('metadata', {}).get('uuid')))
         
-        #### DATASOURCES
+        with cf.ThreadPoolExecutor() as mon_exec:
+            mon_results = [mon_exec.submit(monitor_eval, mr) for mr in get_monitors_response]
+            for mon_result in cf.as_completed(mon_results):
+                mon_result.result()
+        
+        #### GET WORKSPACE METRIC INFORMATION
+        print(f'GETTING METRIC INFORMATION FOR WORKSPACE {wksp}')
+        get_metrics_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/metrics', headers=headers).text)
+        
+        #### WORKSPACE METRICS EVAL FUNCTION FOR MULTITHREADING
+        def metric_eval(x):
+            created = int(x.get('status', {}).get('createdTs')) if x.get('status', {}).get('createdTs') is not None else 0
+            updated = int(x.get('status', {}).get('configUpdatedTs')) if x.get('status', {}).get('configUpdatedTs') is not None else 0
+            if created >= updated:
+                if validate_time(x.get('status', {}).get('createdTs')) == True:
+                    MONITORS_AUDIT.append([wksp, "METRIC", "CREATED", str(x.get('metadata', {}).get('name')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs'))), str(x.get('metadata', {}).get('ownedBy', {}).get('username'))])
+            else:
+                if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
+                    MONITORS_AUDIT.append([wksp, "METRIC", "UPDATED", str(x.get('metadata', {}).get('name')), str(datetime.fromtimestamp(x.get('status', {}).get('configUpdatedTs'))), str(x.get('metadata', {}).get('updatedBy', {}).get('username'))])
+        
+        #### WORKSPACE METRICS ORPHANED EVAL FUNCTION FOR MULTITHREADING
+        def metric_orphaned(x):
+            if x.get('metadata', {}).get('uuid') not in monitors_set:
+                now = datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
+                mdt = datetime.fromtimestamp(x.get('status', {}).get('createdTs'))
+                diff = now - mdt
+                hour_diff = (diff.days * 24) + (diff.seconds // 3600)
+                if hour_diff > 24:
+                    ORPHANED_METRICS.append([str(x.get('metadata', {}).get('name')), str(x.get('metadata', {}).get('ownedBy', {}).get('username')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs')))])
+        
+        with cf.ThreadPoolExecutor() as met_exec:
+            met_results = [met_exec.submit(metric_eval, me) for me in get_metrics_response]
+            orph_results = [met_exec.submit(metric_orphaned, oe) for oe in get_metrics_response]
+            for met_result in cf.as_completed(met_results):
+                met_result.result()
+            
+            for orph_result in cf.as_completed(orph_results):
+                orph_result.result()
+                
+        #### GET WORKSPACE INCIDENT INFORMATION
+        print(f'GETTING INCIDENT INFORMATION FOR {wksp}')
+        get_wksp_incident_response = json.loads(requests.request("GET", f'{SERVER}/api/v0/ws/{workspaces[wksp]}/incidents', headers=headers).text).get('data')
+        
+        #### WORKSPACE INCIDENTS EVAL FUNCTION FOR MULTITHREADING
+        def incident_eval(x):
+            i_created = int(x.get('creation_ts')) if x.get('creation_ts') is not None else 0
+            i_updated = int(x.get('updated_ts')) if x.get('updated_ts') is not None else 0
+            if i_created >= i_updated:
+                if validate_time(x.get('creation_ts')) == True:
+                    INCIDENTS_AUDIT.append([wksp, "INCIDENT", "CREATED", str(x.get('id')), str(datetime.fromtimestamp(x.get('creation_ts'))), str(x.get('incident_type'))])
+            else:
+                if validate_time(x.get('updated_ts')) == True:
+                    INCIDENTS_AUDIT.append([wksp, "INCIDENT", "UPDATED", str(x.get('id')), str(datetime.fromtimestamp(x.get('updated_ts'))), str(x.get('incident_type'))])
+            
+        with cf.ThreadPoolExecutor() as inc_exec:
+            inc_results = [inc_exec.submit(incident_eval, wi) for wi in get_wksp_incident_response]
+            for inc_result in cf.as_completed(inc_results):
+                inc_result.result()
+        
+        #### GET DATASOURCE INCIDENT INFORMATION
         print(f'GETTING DATASOURCE INFORMATION FOR {wksp}')
-        datasources_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources'
-        get_datasources_response = json.loads(requests.request("GET", datasources_list_url, headers=headers).text)
+        get_datasources_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources', headers=headers).text)
+        datasources = {}
         
-        for g in get_datasources_response:
-            #### GET UNIQUE DATASOURCE INFORMATION
-            source_uuid = g.get('metadata', {}).get('uuid')
-            source_name = g.get('metadata', {}).get('name')
+        #### DATASOURCE EVAL FUNCTION FOR MULTITHREADING
+        def source_eval(x):
+            datasources[str(x.get('metadata', {}).get('name'))] = str(x.get('metadata', {}).get('uuid'))
             
-            #### CHECK FOR RECENT DATASOURCE CREATION
-            if g.get('status', {}).get('createdTs') is not None and datetime.fromtimestamp(g.get('status', {}).get('createdTs')) >= LAST_DAY:
-                DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "CREATION", str(g.get('metadata', {}).get('name')), str(g.get('status', {}).get('createdTs')), str(g.get('metadata', {}).get('ownedBy', {}).get('username'))])
+            #### CHECK FOR CREATED OR UPDATED IN THE LAST DAY
+            s_created = int(x.get('status', {}).get('createdTs')) if x.get('status', {}).get('createdTs') is not None else 0
+            s_updated = int(x.get('status', {}).get('configUpdatedTs')) if x.get('status', {}).get('configUpdatedTs') is not None else 0
             
-            #### CHECK FOR RECENT DATASOURCE UPDATES
-            if g.get('status', {}).get('configUpdatedTs') is not None and datetime.fromtimestamp(g.get('status', {}).get('configUpdatedTs')) >= LAST_DAY:
-                DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "UPDATE", str(g.get('metadata', {}).get('name')), str(g.get('status', {}).get('configUpdatedTs')), str(g.get('metadata', {}).get('updatedBy', {}).get('username'))])
+            if s_created >= s_updated:
+                if validate_time(x.get('status', {}).get('createdTs')) == True:
+                    DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "CREATION", str(x.get('metadata', {}).get('name')), str(x.get('status', {}).get('createdTs')), str(x.get('metadata', {}).get('ownedBy', {}).get('username'))])
+            else:
+                if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
+                    DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "UPDATE", str(x.get('metadata', {}).get('name')), str(x.get('status', {}).get('configUpdatedTs')), str(x.get('metadata', {}).get('updatedBy', {}).get('username'))])
+        
+        with cf.ThreadPoolExecutor() as src_exec:
+            src_results = [src_exec.submit(source_eval, sr) for sr in get_datasources_response]
+            for src_result in cf.as_completed(src_results):
+                src_result.result()
+        
+        for d in datasources:
+            #### GET SCHEMA INFORMATION
+            print(f'GETTING SCHEMA INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {d}')
+            get_schema_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/schemas', headers=headers).text)['data']
             
-            print(f'GETTING SCHEMA INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
-            #### SCHEMAS
-            schemas_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/profile/schemas'
-            get_schema_response = json.loads(requests.request("GET", schemas_list_url, headers=headers).text)
-            
-            #### LOOP THROUGH SCHEMAS
-            for schema in get_schema_response.get('data'):
-                #### CHECK FOR REMOVED SCHEMAS
-                if schema.get('removedTs') is not None and datetime.fromtimestamp(schema.get('removedTs')) >= LAST_DAY:
-                    SCHEMAS_AUDIT.append([wksp, "SCHEMA", "REMOVED", str(schema.get('name')), str(datetime.fromtimestamp(schema.get('removedTs'))), "NONE"])
+            #### SCHEMA EVAL FUNCTION FOR MULTITHREADING
+            def schema_eval(x):
+                if validate_time(x.get('removedTs')) == True:
+                    SCHEMAS_AUDIT.append([wksp, "SCHEMA", "REMOVED", str(x.get('name')), str(datetime.fromtimestamp(x.get('removedTs'))), "NONE"])
                 
-                #### CHECK FOR NEW SCHEMAS
-                if schema.get('firstSeenTs') is not None and datetime.fromtimestamp(schema.get('firstSeenTs')) >= LAST_DAY:
-                    SCHEMAS_AUDIT.append([wksp, "SCHEMA", "DISCOVERED", str(schema.get('name')), str(datetime.fromtimestamp(schema.get('firstSeenTs'))), "NONE"])
+                if validate_time(x.get('firstSeenTs')) == True:
+                    SCHEMAS_AUDIT.append([wksp, "SCHEMA", "DISCOVERED", str(x.get('name')), str(datetime.fromtimestamp(x.get('firstSeenTs'))), "NONE"])
             
-            #### LOOP THROUGH TABLES
-            print(f'GETTING TABLE INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
-            tables_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/tables'
-            get_tables_response = json.loads(requests.request("GET", tables_list_url, headers=headers).text)
+            with cf.ThreadPoolExecutor() as sch_exec:
+                schema_results = [sch_exec.submit(schema_eval, sr) for sr in get_schema_response]
+                for schema_result in cf.as_completed(schema_results):
+                    schema_result.result()
             
-            #### LOOP THROUGH TABLES
-            for g in get_tables_response:
-                #### GET TABLE UUID FOR API
-                table = str(g.get('tableUuid'))
-                table_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/profile/tables/{table}'
-                get_table_response = json.loads(requests.request("GET", table_list_url, headers=headers).text)
-                #### ADD NEW TABLES
-                if g.get('firstSeenTs') is not None and datetime.fromtimestamp(g.get('firstSeenTs')) >= LAST_DAY:
-                    TABLES_AUDIT.append([wksp, "TABLE", "DISCOVERED", str(g.get('tableName')), str(datetime.fromtimestamp(get_table_response.get('firstSeenTs'))), "NONE"])
+            #### GET TABLE AND COLUMN INFORMATION
+            print(f'GETTING TABLE INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {d}')
+            get_tables_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/tables', headers=headers).text)['data']
             
-                #### GET COLUMN API URL
-                column_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{source_uuid}/profile/tables/{table}/columns'
-                get_column_response = json.loads(requests.request("GET", column_list_url, headers=headers).text)
-                #### LOOP THROUGH COLUMNS
-                for c in get_column_response:
-                    if c.get('firstSeenTs') is not None and datetime.fromtimestamp(c.get('firstSeenTs')) >= LAST_DAY:
-                        COLUMNS_AUDIT.append([wksp, "COLUMN", "DISCOVERED", str(c.get('columnName')), str(datetime.fromtimestamp(c.get('firstSeenTs'))), "NONE"])
-            
-            #### STORE MONITORS FOR METRIC COMPARISON
-            monitors_set = set()
-            
-            #### CREATE MONITORS SEPARATOR
-            print(f'GETTING MONITOR INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
-            monitors_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/monitors'
-            get_monitors_response = json.loads(requests.request("GET", monitors_list_url, headers=headers).text)
+            #### TABLE EVAL FUNCTION FOR MULTITHREADING
+            def table_eval(x):
+                table_id = str(x.get('uuid'))
+                gcr = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/tables/{table_id}/columns', headers=headers).text)
                 
-            #### LOOP THROUGH MONITORS
-            for monitor in get_monitors_response.get('data'):
-                created = int(monitor.get('status', {}).get('createdTs')) if monitor.get('status', {}).get('createdTs') is not None else 0
-                updated = int(monitor.get('status', {}).get('configUpdatedTs')) if monitor.get('status', {}).get('configUpdatedTs') is not None else 0
-                if created >= updated:
-                    if datetime.fromtimestamp(monitor.get('status', {}).get('createdTs')) >= LAST_DAY:
-                        MONITORS_AUDIT.append([wksp, "MONITOR", "CREATED", str(monitor.get('metadata', {}).get('name')), str(datetime.fromtimestamp(monitor.get('status', {}).get('createdTs'))), str(monitor.get('metadata', {}).get('ownedBy', {}).get('username'))])
-                else:
-                    if datetime.fromtimestamp(monitor.get('status', {}).get('configUpdatedTs')) >= LAST_DAY:
-                        MONITORS_AUDIT.append([wksp, "MONITOR", "UPDATED", str(monitor.get('metadata', {}).get('name')), str(datetime.fromtimestamp(monitor.get('status', {}).get('configUpdatedTs'))), str(monitor.get('metadata', {}).get('updatedBy', {}).get('username'))])
+                if validate_time(x.get('firstSeenTs')) == True:
+                    TABLES_AUDIT.append([wksp, "TABLE", "DISCOVERED", str(x.get('tableName')), str(datetime.fromtimestamp(x.get('firstSeenTs'))), "NONE"])
                 
-                monitors_set.add(str(monitor.get('metadata', {}).get('uuid')))
+                #### COLUMN EVAL FUNCTION FOR MULTITHREADING
+                def col_eval(x):
+                    if validate_time(x.get('firstSeenTs')) == True:
+                        COLUMNS_AUDIT.append([wksp, "COLUMN", "DISCOVERED", str(x.get('columnName')), str(datetime.fromtimestamp(x.get('firstSeenTs'))), "NONE"])
             
-            #### LOOP THROUGH METRICS
-            print(f'GETTING METRIC INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {source_name}')
-            metrics_list_url = f'{BASE_URL}/ws/{workspaces[wksp]}/metrics'
-            get_metrics_response = json.loads(requests.request("GET", metrics_list_url, headers=headers).text)
-                            
-            for metric in get_metrics_response:
-                created = int(metric.get('status', {}).get('createdTs')) if metric.get('status', {}).get('createdTs') is not None else 0
-                updated = int(metric.get('status', {}).get('configUpdatedTs')) if metric.get('status', {}).get('configUpdatedTs') is not None else 0
-                if created >= updated:
-                    if datetime.fromtimestamp(metric.get('status', {}).get('createdTs')) >= LAST_DAY:
-                        MONITORS_AUDIT.append([wksp, "METRIC", "CREATED", str(metric.get('metadata', {}).get('name')), str(datetime.fromtimestamp(metric.get('status', {}).get('createdTs'))), str(metric.get('metadata', {}).get('ownedBy', {}).get('username'))])
-                else:
-                    if datetime.fromtimestamp(metric.get('status', {}).get('configUpdatedTs')) >= LAST_DAY:
-                        MONITORS_AUDIT.append([wksp, "METRIC", "UPDATED", str(metric.get('metadata', {}).get('name')), str(datetime.fromtimestamp(metric.get('status', {}).get('configUpdatedTs'))), str(metric.get('metadata', {}).get('updatedBy', {}).get('username'))])
+                with cf.ThreadPoolExecutor() as col_exec:
+                    col_results = [col_exec.submit(col_eval, cr) for cr in gcr]
+                    for col_result in cf.as_completed(col_results):
+                        col_result.result()
                 
-                if metric.get('metadata', {}).get('uuid') not in monitors_set:
-                    now = datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
-                    mdt = datetime.fromtimestamp(metric.get('status', {}).get('createdTs'))
-                    diff = now - mdt
-                    hour_diff = (diff.days * 24) + (diff.seconds // 3600)
-                    if hour_diff > 24:
-                        ORPHANED_METRICS.append([str(metric.get('metadata', {}).get('name')), str(metric.get('metadata', {}).get('ownedBy', {}).get('username')), str(datetime.fromtimestamp(metric.get('status', {}).get('createdTs')))])
-    
+            with cf.ThreadPoolExecutor() as tbl_exec:
+                table_results = [tbl_exec.submit(table_eval, tr) for tr in get_tables_response]
+                for table_result in cf.as_completed(table_results):
+                    table_result.result()
+            
+    #### AUDIT LIST ARRAY FOR CSV CREATION
     AUDIT_LIST = []
+    
+    #### CHECK FOR WHICH AUDIT SETS NEED TO BE ADDED TO CSV
     if len(WORKSPACES_AUDIT) > 0:
         for wa in WORKSPACES_AUDIT:
             AUDIT_LIST.append(wa)
@@ -219,7 +306,9 @@ def daily_audit(headers):
         for ia in INCIDENTS_AUDIT:
             AUDIT_LIST.append(ia)
     
+    #### CREATE EXCEL DOC FOR AUDIT OUTPUT
     with xl.Workbook("./audit_output.xlsx") as workbook:
+        #### ADD NEW DATA
         if len(AUDIT_LIST) > 0:
             fields = ["WORKSPACE", "OBJECT", "EVENT", "OBJECT NAME", "EVENT TIME", "USER NAME"]
             row = 1
@@ -229,6 +318,7 @@ def daily_audit(headers):
                 audit_worksheet.write_row(row, 0, al)
                 row += 1
         
+        #### ADD ORPHANED METRIC INFORMATION TO NEW EXCEL WORKSHEET
         if len(ORPHANED_METRICS) > 0:
             fields = ["METRIC NAME", "CREATED BY", "CREATED AT"]
             row = 1
