@@ -112,7 +112,7 @@ def daily_audit(headers):
                 W_USERS_AUDIT.append([wksp, "WORKSPACE USER", "CREATION", str(x.get('username')), str(datetime.fromtimestamp(x.get('created_at'))), f"ROLE - {str(x.get('role'))}"])
         
         with cf.ThreadPoolExecutor() as user_exec:
-            usr_results = [user_exec.submit(incident_eval, wu) for wu in get_wksp_users_response]
+            usr_results = [user_exec.submit(user_eval, wu) for wu in get_wksp_users_response]
             for usr_result in cf.as_completed(usr_results):
                 usr_result.result()
             
