@@ -87,7 +87,7 @@ def daily_audit(headers):
     
     #### GET WORKSPACES INFORMATION
     print('GETTING WORKSPACE INFO')
-    get_workspaces_response = json.loads(requests.request("GET", f'{BASE_URL}/workspaces', headers=headers).text)['data']
+    get_workspaces_response = json.loads(requests.request("GET", f'{BASE_URL}/workspaces', headers=headers).text).get('data')
     
     #### WORKSPACE EVAL FUNCTION FOR MULTITHREADING
     def wksp_eval(x):
@@ -124,7 +124,7 @@ def daily_audit(headers):
         
         #### GET WORKSPACE MONITOR INFORMATION
         print(f'GETTING MONITOR INFORMATION FOR WORKSPACE {wksp}')
-        get_monitors_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/monitors', headers=headers).text)['data']
+        get_monitors_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/monitors', headers=headers).text).get('data')
         
         #### WORKSPACE MONITORS EVAL FUNCTION FOR MULTITHREADING
         def monitor_eval(x):
@@ -226,7 +226,7 @@ def daily_audit(headers):
         for d in datasources:
             #### GET SCHEMA INFORMATION
             print(f'GETTING SCHEMA INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {d}')
-            get_schema_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/schemas', headers=headers).text)['data']
+            get_schema_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/schemas', headers=headers).text).get('data')
             
             #### SCHEMA EVAL FUNCTION FOR MULTITHREADING
             def schema_eval(x):
@@ -243,7 +243,7 @@ def daily_audit(headers):
             
             #### GET TABLE AND COLUMN INFORMATION
             print(f'GETTING TABLE INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {d}')
-            get_tables_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/tables', headers=headers).text)['data']
+            get_tables_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/tables', headers=headers).text).get('data')
             
             #### TABLE EVAL FUNCTION FOR MULTITHREADING
             def table_eval(x):
@@ -388,7 +388,7 @@ def get_workspace_info(headers):
 
     ### Add workspace Name and UUID to dict
     for w in get_workspaces_response.get('data'):
-        workspaces[w['name']] = w['uuid']
+        workspaces[w.get('name')] = w.get('uuid')
     
     ### Add EXIT row to dict
     workspaces['USERS'] = 'USERS'
@@ -447,7 +447,7 @@ def get_datasource_info(headers, workspace):
 
     ### Fill in the dict
     for d in get_datasources_response:
-        datasources[d['metadata']['name']] = d['metadata']['uuid']
+        datasources[d.get('metadata', {}).get('name')] = d.get('metadata', {}).get('uuid')
 
     ### Add an EXIT route to the dict
     datasources['USERS'] = 'USERS'
@@ -465,13 +465,13 @@ def get_datasource_info(headers, workspace):
     ### Get user response
     source_choice = inquirer.prompt(source_list)
     
-    datasource = datasources.get(source_choice['ds'])
+    datasource = datasources.get(source_choice.get('ds'))
     
     ### Exit route
-    if source_choice['ds'] == 'EXIT':
+    if source_choice.get('ds') == 'EXIT':
         exit()
         
-    if source_choice['ds'] == 'USERS':
+    if source_choice.get('ds') == 'USERS':
         get_wksp_users_info(headers, workspace)
 
     ### Datasource URL to pass to the Get Details function
@@ -560,11 +560,11 @@ Teradata Username: {str(datasource_details.get('config', {}).get('connection', {
     disabled_schemas = {}
     enabled_schemas = {}
     
-    for s in schemas['data']:
+    for s in schemas.get('data'):
         if s.get('profilerConfig', {}).get('enabled') == False:
-            disabled_schemas[s['name']] = s['uuid']
+            disabled_schemas[s.get('name')] = s.get('uuid')
         else:
-            enabled_schemas[s['name']] = s['uuid']
+            enabled_schemas[s.get('name')] = s.get('uuid')
     
     print('''SCHEMAS WITH PROFILING:
 ''')
@@ -575,6 +575,7 @@ SCHEMAS WITHOUT PROFILING:
 ''')
     for d in disabled_schemas:
         print(d)
+    print('')
     
     next_steps = [
         inquirer.List(
@@ -585,10 +586,10 @@ SCHEMAS WITHOUT PROFILING:
     ]
     
     nxt = inquirer.prompt(next_steps)
-    if nxt['next'] == 'EXIT':
+    if nxt.get('next') == 'EXIT':
         exit()
 
-    if nxt['next'] == 'View Tables':
+    if nxt.get('next') == 'View Tables':
         if len(enabled_schemas) == 1:
             print(list(enabled_schemas.keys())[0])
             get_table_info(HEADERS, datasource_url, list(enabled_schemas.keys())[0])
@@ -602,21 +603,9 @@ SCHEMAS WITHOUT PROFILING:
                 ),
             ]
             sch = inquirer.prompt(get_schema)
-            get_table_info(HEADERS, datasource_url, sch['schema'])
+            get_table_info(HEADERS, datasource_url, sch.get('schema'))
     
-    # if nxt['next'] == 'Enable Schemas':
-    #     enable_schema = [
-    #         inquirer.Checkbox(
-    #             "schemas",
-    #             message = "What Schema's do you want to enable?",
-    #             choices = disabled_schemas.keys(),
-    #         ),
-    #     ]
-    #     es = inquirer.prompt(enable_schema)
-    #     for e in es['schemas']:
-    #         print(disabled_schemas[e])
-    
-    if nxt['next'] == 'Schema Details':
+    if nxt.get('next') == 'Schema Details':
         for v in enabled_schemas.values():
             schema_details = json.loads(requests.request("GET", f'{schema_url}/{v}', headers=headers).text)
             fs = str(datetime.fromtimestamp(schema_details.get('firstSeenTs'))) if schema_details.get('firstSeenTs') != None else "Never Seen"
@@ -647,10 +636,10 @@ Schema Change Alerts: {str(schema_details.get('profilerConfig', {}).get('tableLi
     
     gtd = inquirer.prompt(get_table_details)
     
-    if gtd['tables'] == 'EXIT':
+    if gtd.get('tables') == 'EXIT':
         exit()
     
-    if gtd['tables'] == 'View Tables':
+    if gtd.get('tables') == 'View Tables':
         if len(enabled_schemas) == 1:
             print(list(enabled_schemas.keys())[0])
             get_table_info(HEADERS, datasource_url, list(enabled_schemas.keys())[0])
@@ -668,7 +657,7 @@ def get_table_info(headers, datasource_url, schema):
 
     for t in get_tables_response:
         if t.get('schemaName') == schema and t.get('profilerConfig', {}).get('enabled') == True:
-            enabled_tables[t['tableName']] = t['tableUuid']
+            enabled_tables[t.get('tableName')] = t.get('tableUuid')
         elif t.get('schemaName') == schema and t.get('profilerConfig', {}).get('enabled') == True:
             disabled_tables.append(t.get('tableName'))
     
@@ -684,12 +673,12 @@ def get_table_info(headers, datasource_url, schema):
     ]
 
     table_choice = inquirer.prompt(tables_list)
-    table = enabled_tables.get(table_choice['tb'])
+    table = enabled_tables.get(table_choice.get('tb'))
     
-    if table_choice['tb'] == 'EXIT':
+    if table_choice.get('tb') == 'EXIT':
         exit()
     
-    if table_choice['tb'] == 'Unmonitored Tables':
+    if table_choice.get('tb') == 'Unmonitored Tables':
         if len(disabled_tables) > 0:
             print(disabled_tables)
         else:
@@ -703,10 +692,9 @@ def get_table_info(headers, datasource_url, schema):
     query_scope = "Incremental" if table_details.get('profilerConfig', {}).get('queryScope') == 'timeRange' else "Full Table"
     partitioning = list(table_details.get('profilerConfig', {}).get('partitions')) if len(table_details.get('profilerConfig', {}).get('partitions')) > 0 else "No Partitions"
     partitionTZ = "No Partitions" if partitioning == "No Partitions" else str(table_details.get('profilerConfig', {}).get('partitionTimezone'))
-    
-    print(table_details)
 
-    print(f"""TABLE OVERVIEW
+    print(f"""
+TABLE OVERVIEW
 Schema: {str(table_details.get('schemaName'))}
 Table: {str(table_details.get('tableName'))}
 Last Seen: {str(datetime.fromtimestamp(table_details.get('lastSeenTs')))}
@@ -728,7 +716,7 @@ Data Volume: {str(table_details.get('profilerConfig', {}).get('volume', {}).get(
 TABLE STATUS
 Data Delay Last Check: {str(datetime.fromtimestamp(table_details.get('status', {}).get('dataDelay', {}).get('lastEventTs')))}
 Data Volume Last Check: {str(datetime.fromtimestamp(table_details.get('status', {}).get('tableVolume', {}).get('lastEventTs')))}
-            """)
+""")
     
     next_steps = [
         inquirer.List(
@@ -739,9 +727,9 @@ Data Volume Last Check: {str(datetime.fromtimestamp(table_details.get('status', 
     ]
     
     nxt = inquirer.prompt(next_steps)
-    if nxt['next'] == 'EXIT':
+    if nxt.get('next') == 'EXIT':
         exit()
-    if nxt['next'] == 'Columns' :
+    if nxt.get('next') == 'Columns' :
         get_column_info(HEADERS, table_url)
         
     return table, table_details, table_url
@@ -753,7 +741,7 @@ def get_column_info(headers, table_url):
     get_columns_response = json.loads(requests.request("GET", columns_list_url, headers=headers).text)
 
     for c in get_columns_response:
-        columns[c['columnName']] = c['uuid']
+        columns[c.get('columnName')] = c.get('uuid')
 
     column_list = [
         inquirer.List(
@@ -763,19 +751,19 @@ def get_column_info(headers, table_url):
         ),
     ]
     column_choice = inquirer.prompt(column_list)
-    column = columns.get(column_choice['col'])
+    column = columns.get(column_choice.get('col'))
 
     column_url = f'{columns_list_url}/{column}'
 
     get_column_info = json.loads(requests.request("GET", column_url, headers=headers).text)
 
-    print('Column Name: ' + get_column_info['columnName'])
-    print('Data Type: ' + get_column_info['columnType'])
-    print('Categorical Distribution Enabled: ' + str(get_column_info['profilerConfig']['categoricalDistribution']['enabled']))
-    print('Category Tracking Enabled: ' + str(get_column_info['profilerConfig']['categoryListChange']['enabled']))
-    print('Numerical Distribution Enabled: ' + str(get_column_info['profilerConfig']['numericalDistribution']['enabled']))
-    print('Null% Enabled: ' + str(get_column_info['profilerConfig']['missingValue']['enabled']))
-
+    print(f"""
+Column Name: {str(get_column_info.get('columnName'))}
+Data Type: {str(get_column_info.get('columnType'))}
+Categorical Distribution Enabled: {str(get_column_info.get('profilerConfig', {}).get('categoricalDistribution', {}). get('enabled'))}
+Numerical Distribution Enabled: {str(get_column_info.get('profilerConfig', {}).get('numericalDistribution', {}).get('enabled'))}
+Null% Enabled: {str(get_column_info.get('profilerConfig', {}).get('missingValue', {}).get('enabled'))}
+""")
 
 if __name__ == '__main__':
     initial_action = [
@@ -787,9 +775,9 @@ if __name__ == '__main__':
     ]
     
     init_choice = inquirer.prompt(initial_action)
-    if init_choice['init'] == 'EXIT':
+    if init_choice.get('init') == 'EXIT':
         exit()
-    elif init_choice['init'] == 'Audit':
+    elif init_choice.get('init') == 'Audit':
         daily_audit(HEADERS)
     else:
         get_workspace_info(HEADERS)
