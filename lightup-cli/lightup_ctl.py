@@ -1,6 +1,6 @@
 ##########################################################################################
 # NAME: Lightup Control
-# VERSION: 0.5.0
+# VERSION: 0.5.3
 # DESCRIPTION:
 # This Lightup CLI is intended for auditing and exploring purposes of Lightup
 # which is based on the role associated to the API token supplied to the CLI.
@@ -42,6 +42,24 @@ HEADERS = {
     "Accept": "application/json"
 }
 
+################## API REQUEST VALIDATION ##################
+# This function is used to validate the API response
+# to make sure the rest of the CLI can operate as expected.
+# There is a check for a list or dictionary, and if the
+# 'data' key exists in the resulting dictionary or not
+
+def get_req_results(url):
+    rs = json.loads(requests.request("GET", url, headers=HEADERS).text)
+    if type(rs) == dict and rs != None:
+        if rs.get('data') != None:
+            return rs.get('data')
+        else:
+            return rs
+    elif type(rs) == list:
+        return rs
+    else:
+        return []
+
 ################## AUDITING ##################
 # This function will execute a full audit
 # of all changes for the past day and output
@@ -73,7 +91,7 @@ def daily_audit(headers):
     
     #### GET APPLICATION USERS
     print('GETTING APPLICATION USER INFO')
-    get_users_response = json.loads(requests.request("GET", f'{SERVER}/api/v0/users', headers=headers).text)
+    get_users_response = get_req_results(f'{SERVER}/api/v0/users')
     
     #### APPLICATION USER EVAL FUNCTION FOR MULTITHREADING
     def app_usr_eval(x):
@@ -87,7 +105,7 @@ def daily_audit(headers):
     
     #### GET WORKSPACES INFORMATION
     print('GETTING WORKSPACE INFO')
-    get_workspaces_response = json.loads(requests.request("GET", f'{BASE_URL}/workspaces', headers=headers).text).get('data')
+    get_workspaces_response = get_req_results(f'{BASE_URL}/workspaces')
     
     #### WORKSPACE EVAL FUNCTION FOR MULTITHREADING
     def wksp_eval(x):
@@ -104,7 +122,7 @@ def daily_audit(headers):
     for wksp in workspaces:
         #### GET WORKSPACE USER INFORMATION
         print(f'GETTING USERS INFORMATION FOR {wksp}')
-        get_wksp_users_response = json.loads(requests.request("GET", f'{SERVER}/api/v0/ws/{workspaces[wksp]}/users', headers=headers).text)
+        get_wksp_users_response = get_req_results(f'{SERVER}/api/v0/ws/{workspaces[wksp]}/users')
         
         #### WORKSPACE USER EVAL FUNCTION FOR MULTITHREADING
         def user_eval(x):
@@ -124,7 +142,7 @@ def daily_audit(headers):
         
         #### GET WORKSPACE MONITOR INFORMATION
         print(f'GETTING MONITOR INFORMATION FOR WORKSPACE {wksp}')
-        get_monitors_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/monitors', headers=headers).text).get('data')
+        get_monitors_response = get_req_results(f'{BASE_URL}/ws/{workspaces[wksp]}/monitors')
         
         #### WORKSPACE MONITORS EVAL FUNCTION FOR MULTITHREADING
         def monitor_eval(x):
@@ -146,7 +164,7 @@ def daily_audit(headers):
         
         #### GET WORKSPACE METRIC INFORMATION
         print(f'GETTING METRIC INFORMATION FOR WORKSPACE {wksp}')
-        get_metrics_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/metrics', headers=headers).text)
+        get_metrics_response = get_req_results(f'{BASE_URL}/ws/{workspaces[wksp]}/metrics')
         
         #### WORKSPACE METRICS EVAL FUNCTION FOR MULTITHREADING
         def metric_eval(x):
@@ -180,7 +198,7 @@ def daily_audit(headers):
                 
         #### GET WORKSPACE INCIDENT INFORMATION
         print(f'GETTING INCIDENT INFORMATION FOR {wksp}')
-        get_wksp_incident_response = json.loads(requests.request("GET", f'{SERVER}/api/v0/ws/{workspaces[wksp]}/incidents', headers=headers).text).get('data')
+        get_wksp_incident_response = get_req_results(f'{SERVER}/api/v0/ws/{workspaces[wksp]}/incidents')
         
         #### WORKSPACE INCIDENTS EVAL FUNCTION FOR MULTITHREADING
         def incident_eval(x):
@@ -200,7 +218,7 @@ def daily_audit(headers):
         
         #### GET DATASOURCE INCIDENT INFORMATION
         print(f'GETTING DATASOURCE INFORMATION FOR {wksp}')
-        get_datasources_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources', headers=headers).text)
+        get_datasources_response = get_req_results(f'{BASE_URL}/ws/{workspaces[wksp]}/sources')
         datasources = {}
         
         #### DATASOURCE EVAL FUNCTION FOR MULTITHREADING
@@ -226,7 +244,7 @@ def daily_audit(headers):
         for d in datasources:
             #### GET SCHEMA INFORMATION
             print(f'GETTING SCHEMA INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {d}')
-            get_schema_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/schemas', headers=headers).text).get('data')
+            get_schema_response = get_req_results(f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/schemas')
             
             #### SCHEMA EVAL FUNCTION FOR MULTITHREADING
             def schema_eval(x):
@@ -243,12 +261,12 @@ def daily_audit(headers):
             
             #### GET TABLE AND COLUMN INFORMATION
             print(f'GETTING TABLE INFORMATION FOR WORKSPACE {wksp} AND DATASOURCE {d}')
-            get_tables_response = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/tables', headers=headers).text).get('data')
+            get_tables_response = get_req_results(f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/tables')
             
             #### TABLE EVAL FUNCTION FOR MULTITHREADING
             def table_eval(x):
                 table_id = str(x.get('uuid'))
-                gcr = json.loads(requests.request("GET", f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/tables/{table_id}/columns', headers=headers).text)
+                gcr = get_req_results(f'{BASE_URL}/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/tables/{table_id}/columns')
                 
                 if validate_time(x.get('firstSeenTs')) == True:
                     TABLES_AUDIT.append([wksp, "TABLE", "DISCOVERED", str(x.get('tableName')), str(datetime.fromtimestamp(x.get('firstSeenTs'))), "NONE"])
