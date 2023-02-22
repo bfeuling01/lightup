@@ -2,14 +2,26 @@
 
 This CLI is used to trigger metrics
 
-# How To
+# Initializing
 
-The CLI, when run, will get all triggerable metrics and tables, and then allow the user 
-to select which metric or table of metrics the user wants to trigger.
+It is recommended that the user leverages python virtualenv for this setup.
 
-To run the CLI, make sure that the lightup API credential file is in the same location
-as the CLI being run. Make sure that you install the required python libraries found in
-requirements.txt file
+1. Start by installing the required python libraries (requirements.txt).
+2. Download the Lightup API file (lightup-api-credentials.json) from your Lightup instance
+3. Place the API file (lightup-api-credentials.json) in the same folder location as the metric_trigger.py file
+4. Run using `python metric_trigger.py`
+
+# Usage
+
+Metric Trigger CLI will first load the Refresh Token and Server URL from the lightup-api-credentials.json file
+that is in the same folder as the lightup_ctl.py file.
+
+The user will be prompted to select a desired Lightup Workspace.
+
+Then, the user will be asked to either trigger individual metrics (METRICS), all triggerable metrics in a table (TABLES), or exit (EXIT).
+
+Finally, the user will be given a list of available TABLES or METRICS to trigger. The user can select as many
+items from the list using the SPACEBAR to select and ENTER to complete the selection
 
 # TODO
 
