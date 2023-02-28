@@ -1,6 +1,6 @@
 ##########################################################################################
 # NAME: Lightup Control
-# VERSION: 0.6.0
+# VERSION: 0.7.0
 # DESCRIPTION:
 # This Lightup CLI is intended for auditing and exploring purposes of Lightup
 # which is based on the role associated to the API token supplied to the CLI.
