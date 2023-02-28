@@ -33,7 +33,11 @@ BASE_URL = f'{SERVER}/api/v1'
 
 TOKEN_PAYLOAD = {"refresh": REFRESH_TOKEN}
 TOKEN_URL = f'{BASE_URL}/token/refresh/'
-TOKEN_RESPONSE = json.loads(requests.request("POST", TOKEN_URL, json=TOKEN_PAYLOAD).text)
+try:
+    TOKEN_RESPONSE = json.loads(requests.request("POST", TOKEN_URL, json=TOKEN_PAYLOAD).text)
+except:
+    print("Unable to get Access Token")
+    exit()
 
 ACCESS_TOKEN = 'Bearer ' + TOKEN_RESPONSE.get('access')
 
@@ -49,16 +53,19 @@ HEADERS = {
 # 'data' key exists in the resulting dictionary or not
 
 def get_req_results(url):
-    rs = json.loads(requests.request("GET", url, headers=HEADERS).text)
-    if type(rs) == dict and rs != None:
-        if rs.get('data') != None:
-            return rs.get('data')
-        else:
+    try:
+        rs = json.loads(requests.request("GET", url, headers=HEADERS).text)
+        if type(rs) == dict and rs != None:
+            if rs.get('data') != None:
+                return rs.get('data')
+            else:
+                return rs
+        elif type(rs) == list:
             return rs
-    elif type(rs) == list:
-        return rs
-    else:
-        return []
+        else:
+            return []
+    except:
+        print(f'{rs} is not recognized')
 
 ################## AUDITING ##################
 # This function will execute a full audit
@@ -86,8 +93,11 @@ def daily_audit(headers):
     
     #### VALIDATE TIMESTAMP
     def validate_time(x):
-        if x is not None and datetime.fromtimestamp(x) >= LAST_DAY:
-            return True
+        try:
+            if x is not None and datetime.fromtimestamp(x) >= LAST_DAY:
+                return True
+        except:
+            print(f'{x} is of type {type(x)}')
     
     #### GET APPLICATION USERS
     print('GETTING APPLICATION USER INFO')
@@ -95,13 +105,20 @@ def daily_audit(headers):
     
     #### APPLICATION USER EVAL FUNCTION FOR MULTITHREADING
     def app_usr_eval(x):
-        if validate_time(x.get('created_at')) == True:
-            USERS_AUDIT.append(["NONE", "APP USER", "CREATION", str(x.get('username')), datetime.fromtimestamp(x.get('created_at')), "NONE"])
+        try:
+            time_val = x.get('created_at')
+            if validate_time(time_val) == True:
+                USERS_AUDIT.append(["NONE", "APP USER", "CREATION", str(x.get('username')), datetime.fromtimestamp(time_val), "NONE"])
+        except:
+            print(f'created_at is of type {type(time_val)}')
     
     with cf.ThreadPoolExecutor() as au_exec:
-        app_users = [au_exec.submit(app_usr_eval, au) for au in get_users_response]
-        for app_user in app_users:
-            app_user.result()
+        try:
+            app_users = [au_exec.submit(app_usr_eval, au) for au in get_users_response]
+            for app_user in app_users:
+                app_user.result()
+        except:
+            print('Unable to multithread the Application Users API requests')
     
     #### GET WORKSPACES INFORMATION
     print('GETTING WORKSPACE INFO')
@@ -110,14 +127,21 @@ def daily_audit(headers):
     #### WORKSPACE EVAL FUNCTION FOR MULTITHREADING
     def wksp_eval(x):
         workspaces[str(x.get('name'))] = str(x.get('uuid'))
-        if validate_time(x.get('created_at')) == True:
-        #### ADD WORKSPACE UUID FOR SCHEMA, TABLE, COLUMN, METRIC AUDITING
-            WORKSPACES_AUDIT.append([str(x.get('name')), "WORKSPACE", "CREATION", str(x.get('name')), str(x.get('created_at')), "NONE"])
+        time_val = x.get('created_at')
+        try:
+            if validate_time(time_val) == True:
+            #### ADD WORKSPACE UUID FOR SCHEMA, TABLE, COLUMN, METRIC AUDITING
+                WORKSPACES_AUDIT.append([str(x.get('name')), "WORKSPACE", "CREATION", str(x.get('name')), str(time_val), "NONE"])
+        except:
+            print(f'created_at is of type {type(time_val)}')
         
     with cf.ThreadPoolExecutor() as wksp_exec:
-        wksp_results = [wksp_exec.submit(wksp_eval, wr) for wr in get_workspaces_response]
-        for wksp_result in cf.as_completed(wksp_results):
-            wksp_result.result()
+        try:
+            wksp_results = [wksp_exec.submit(wksp_eval, wr) for wr in get_workspaces_response]
+            for wksp_result in cf.as_completed(wksp_results):
+                wksp_result.result()
+        except:
+            print('Unable to multithread the Workspace API requests')
             
     for wksp in workspaces:
         #### GET WORKSPACE USER INFORMATION
@@ -126,13 +150,20 @@ def daily_audit(headers):
         
         #### WORKSPACE USER EVAL FUNCTION FOR MULTITHREADING
         def user_eval(x):
-            if validate_time(x.get('created_at')) == True:
-                W_USERS_AUDIT.append([wksp, "WORKSPACE USER", "CREATION", str(x.get('username')), str(datetime.fromtimestamp(x.get('created_at'))), f"ROLE - {str(x.get('role'))}"])
+            time_val = x.get('created_at')
+            try:
+                if validate_time(time_val) == True:
+                    W_USERS_AUDIT.append([wksp, "WORKSPACE USER", "CREATION", str(x.get('username')), str(datetime.fromtimestamp(time_val)), f"ROLE - {str(x.get('role'))}"])
+            except:
+                print(f'created_at is of type {type(time_val)}')
         
         with cf.ThreadPoolExecutor() as user_exec:
-            usr_results = [user_exec.submit(user_eval, wu) for wu in get_wksp_users_response]
-            for usr_result in cf.as_completed(usr_results):
-                usr_result.result()
+            try:
+                usr_results = [user_exec.submit(user_eval, wu) for wu in get_wksp_users_response]
+                for usr_result in cf.as_completed(usr_results):
+                    usr_result.result()
+            except:
+                print('Unable to multithread the Workspace Users API requests')
             
         for wksp_user in get_wksp_users_response:
             user_eval(wksp_user)
@@ -146,21 +177,31 @@ def daily_audit(headers):
         
         #### WORKSPACE MONITORS EVAL FUNCTION FOR MULTITHREADING
         def monitor_eval(x):
-            mon_created = 0 if len(x) == 0 else int(x.get('status', {}).get('createdTs'))
-            mon_updated = 0 if len(x) == 0 else int(x.get('status', {}).get('configUpdatedTs'))
-            if mon_created >= mon_updated:
-                if validate_time(x.get('status', {}).get('createdTs')) == True:
-                    MONITORS_AUDIT.append([wksp, "MONITOR", "CREATED", str(x.get('metadata', {}).get('name')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs'))), str(x.get('metadata', {}).get('ownedBy', {}).get('username') or x.get('metadata', {}).get('updatedBy', {}).get('username'))])
-            else:
-                if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
-                    MONITORS_AUDIT.append([wksp, "MONITOR", "UPDATED", str(x.get('metadata', {}).get('name')), str(datetime.fromtimestamp(x.get('status', {}).get('configUpdatedTs'))), str(x.get('metadata', {}).get('updatedBy', {}).get('username') or x.get('metadata', {}).get('ownedBy', {}).get('username'))])
+            try:
+                mon_created = 0 if len(x) == 0 else int(x.get('status', {}).get('createdTs'))
+                mon_updated = 0 if len(x) == 0 else int(x.get('status', {}).get('configUpdatedTs'))
+            except:
+                print('Issue getting Monitor Created or Updated time')
             
+            try:
+                if mon_created >= mon_updated:
+                    if validate_time(x.get('status', {}).get('createdTs')) == True:
+                        MONITORS_AUDIT.append([wksp, "MONITOR", "CREATED", str(x.get('metadata', {}).get('name')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs'))), str(x.get('metadata', {}).get('ownedBy', {}).get('username') or x.get('metadata', {}).get('updatedBy', {}).get('username'))])
+                else:
+                    if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
+                        MONITORS_AUDIT.append([wksp, "MONITOR", "UPDATED", str(x.get('metadata', {}).get('name')), str(datetime.fromtimestamp(x.get('status', {}).get('configUpdatedTs'))), str(x.get('metadata', {}).get('updatedBy', {}).get('username') or x.get('metadata', {}).get('ownedBy', {}).get('username'))])
+            except:
+                print('Unable to get monitor information')
+                
             monitors_set.add(str(x.get('metadata', {}).get('uuid')))
         
         with cf.ThreadPoolExecutor() as mon_exec:
-            mon_results = [mon_exec.submit(monitor_eval, mr) for mr in get_monitors_response]
-            for mon_result in cf.as_completed(mon_results):
-                mon_result.result()
+            try:
+                mon_results = [mon_exec.submit(monitor_eval, mr) for mr in get_monitors_response]
+                for mon_result in cf.as_completed(mon_results):
+                    mon_result.result()
+            except:
+                print('Unable to multithread the Monitor API requests')
         
         #### GET WORKSPACE METRIC INFORMATION
         print(f'GETTING METRIC INFORMATION FOR WORKSPACE {wksp}')
@@ -168,33 +209,49 @@ def daily_audit(headers):
         
         #### WORKSPACE METRICS EVAL FUNCTION FOR MULTITHREADING
         def metric_eval(x):
-            met_created = 0 if len(x) == 0 else int(x.get('status', {}).get('createdTs'))
-            met_updated = 0 if len(x) == 0 else int(x.get('status', {}).get('configUpdatedTs'))
-            if met_created >= met_updated:
-                if validate_time(x.get('status', {}).get('createdTs')) == True:
-                    MONITORS_AUDIT.append([wksp, "METRIC", "CREATED", str(x.get('metadata', {}).get('uuid')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs'))), str(x.get('metadata', {}).get('ownedBy', {}).get('username') or x.get('metadata', {}).get('updatedBy', {}).get('username'))])
-            else:
-                if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
-                    MONITORS_AUDIT.append([wksp, "METRIC", "UPDATED", str(x.get('metadata', {}).get('uuid')), str(datetime.fromtimestamp(x.get('status', {}).get('configUpdatedTs'))), str(x.get('metadata', {}).get('updatedBy', {}).get('username') or x.get('metadata', {}).get('ownedBy', {}).get('username'))])
+            try:
+                met_created = 0 if len(x) == 0 else int(x.get('status', {}).get('createdTs'))
+                met_updated = 0 if len(x) == 0 else int(x.get('status', {}).get('configUpdatedTs'))
+            except:
+                print('Issue getting Metric Created or Updated time')
+            
+            try:
+                if met_created >= met_updated:
+                    if validate_time(x.get('status', {}).get('createdTs')) == True:
+                        MONITORS_AUDIT.append([wksp, "METRIC", "CREATED", str(x.get('metadata', {}).get('uuid')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs'))), str(x.get('metadata', {}).get('ownedBy', {}).get('username') or x.get('metadata', {}).get('updatedBy', {}).get('username'))])
+                else:
+                    if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
+                        MONITORS_AUDIT.append([wksp, "METRIC", "UPDATED", str(x.get('metadata', {}).get('uuid')), str(datetime.fromtimestamp(x.get('status', {}).get('configUpdatedTs'))), str(x.get('metadata', {}).get('updatedBy', {}).get('username') or x.get('metadata', {}).get('ownedBy', {}).get('username'))])
+            except:
+                print('Unable to get metric information')
         
         #### WORKSPACE METRICS ORPHANED EVAL FUNCTION FOR MULTITHREADING
         def metric_orphaned(x):
-            if x.get('metadata', {}).get('uuid') not in monitors_set:
-                now = datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
-                mdt = datetime.fromtimestamp(x.get('status', {}).get('createdTs'))
-                diff = now - mdt
-                hour_diff = (diff.days * 24) + (diff.seconds // 3600)
-                if hour_diff > 24:
-                    ORPHANED_METRICS.append([str(x.get('metadata', {}).get('uuid')), str(x.get('metadata', {}).get('ownedBy', {}).get('username') or x.get('metadata', {}).get('updatedBy', {}).get('username')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs')))])
+            try:
+                if x.get('metadata', {}).get('uuid') not in monitors_set:
+                    now = datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
+                    mdt = datetime.fromtimestamp(x.get('status', {}).get('createdTs'))
+                    diff = now - mdt
+                    hour_diff = (diff.days * 24) + (diff.seconds // 3600)
+                    if hour_diff > 24:
+                        ORPHANED_METRICS.append([str(x.get('metadata', {}).get('uuid')), str(x.get('metadata', {}).get('ownedBy', {}).get('username') or x.get('metadata', {}).get('updatedBy', {}).get('username')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs')))])
+            except:
+                print('Unable to get metric information for orphaned metrics check')
         
         with cf.ThreadPoolExecutor() as met_exec:
-            met_results = [met_exec.submit(metric_eval, me) for me in get_metrics_response]
-            orph_results = [met_exec.submit(metric_orphaned, oe) for oe in get_metrics_response]
-            for met_result in cf.as_completed(met_results):
-                met_result.result()
+            try:
+                met_results = [met_exec.submit(metric_eval, me) for me in get_metrics_response]
+                for met_result in cf.as_completed(met_results):
+                    met_result.result()
+            except:
+                print('Unable to multithread the Metric API requests')
             
-            for orph_result in cf.as_completed(orph_results):
-                orph_result.result()
+            try:
+                orph_results = [met_exec.submit(metric_orphaned, oe) for oe in get_metrics_response]
+                for orph_result in cf.as_completed(orph_results):
+                    orph_result.result()
+            except:
+                print('Unable to multithread the metric orphaning process')
                 
         #### GET WORKSPACE INCIDENT INFORMATION
         print(f'GETTING INCIDENT INFORMATION FOR {wksp}')
@@ -202,13 +259,20 @@ def daily_audit(headers):
         if len(get_wksp_incident_response) > 0:
             #### WORKSPACE INCIDENTS EVAL FUNCTION FOR MULTITHREADING
             def incident_eval(x):
-                if validate_time(x.get('creation_ts')) == True:
-                    INCIDENTS_AUDIT.append([wksp, "INCIDENT", "CREATED", str(x.get('id')), str(datetime.fromtimestamp(x.get('creation_ts'))), str(x.get('incident_type'))])
-                
+                time_val = x.get('creation_ts')
+                try:
+                    if validate_time(time_val) == True:
+                        INCIDENTS_AUDIT.append([wksp, "INCIDENT", "CREATED", str(x.get('id')), str(datetime.fromtimestamp(time_val)), str(x.get('incident_type'))])
+                except:
+                    print(f'created_at is of type {type(time_val)}')
+                    
             with cf.ThreadPoolExecutor() as inc_exec:
-                inc_results = [inc_exec.submit(incident_eval, wi) for wi in get_wksp_incident_response]
-                for inc_result in cf.as_completed(inc_results):
-                    inc_result.result()
+                try:
+                    inc_results = [inc_exec.submit(incident_eval, wi) for wi in get_wksp_incident_response]
+                    for inc_result in cf.as_completed(inc_results):
+                        inc_result.result()
+                except:
+                    print('Unable to multithread the Incident API requests')
         
         #### GET DATASOURCE INCIDENT INFORMATION
         print(f'GETTING DATASOURCE INFORMATION FOR {wksp}')
@@ -220,65 +284,83 @@ def daily_audit(headers):
             datasources[str(x.get('metadata', {}).get('name'))] = str(x.get('metadata', {}).get('uuid'))
             
             #### CHECK FOR CREATED OR UPDATED IN THE LAST DAY
-            s_created = 0 if len(x) == 0 else int(x.get('status', {}).get('createdTs'))
-            s_updated = 0 if len(x) == 0 else int(x.get('status', {}).get('configUpdatedTs'))
-            
-            if s_created >= s_updated:
-                if validate_time(x.get('status', {}).get('createdTs')) == True:
-                    DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "CREATION", str(x.get('metadata', {}).get('name')), str(x.get('status', {}).get('createdTs')), str(x.get('metadata', {}).get('ownedBy', {}).get('username'))])
-            else:
-                if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
-                    DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "UPDATE", str(x.get('metadata', {}).get('name')), str(x.get('status', {}).get('configUpdatedTs')), str(x.get('metadata', {}).get('updatedBy', {}).get('username'))])
+            try:
+                s_created = 0 if len(x) == 0 else int(x.get('status', {}).get('createdTs'))
+                s_updated = 0 if len(x) == 0 else int(x.get('status', {}).get('configUpdatedTs'))
+            except:
+                print('Unable to get Datasource information')
+                
+            try:
+                if s_created >= s_updated:
+                    if validate_time(x.get('status', {}).get('createdTs')) == True:
+                        DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "CREATION", str(x.get('metadata', {}).get('name')), str(x.get('status', {}).get('createdTs')), str(x.get('metadata', {}).get('ownedBy', {}).get('username'))])
+                else:
+                    if validate_time(x.get('status', {}).get('configUpdatedTs')) == True:
+                        DATASOURCES_AUDIT.append([wksp, "DATASOURCE", "UPDATE", str(x.get('metadata', {}).get('name')), str(x.get('status', {}).get('configUpdatedTs')), str(x.get('metadata', {}).get('updatedBy', {}).get('username'))])
+            except:
+                print('Unable to get Datasource information')
         
         with cf.ThreadPoolExecutor() as src_exec:
-            src_results = [src_exec.submit(source_eval, sr) for sr in get_datasources_response]
-            for src_result in cf.as_completed(src_results):
-                src_result.result()
+            try:
+                src_results = [src_exec.submit(source_eval, sr) for sr in get_datasources_response]
+                for src_result in cf.as_completed(src_results):
+                    src_result.result()
+            except:
+                print('Unable to multithread the Datasource API requests')
         
         for d in datasources:
             print(f'GETTING DATASOURCE CHANGES FOR WORKSPACE {wksp} AND DATASOURCE {d}')
             get_wksp_events = get_req_results(f'{SERVER}/api/v0/ws/{workspaces[wksp]}/sources/{datasources[d]}/profile/events/?start_ts={YESTERDAY_TMSP}&end_ts={TODAY_TMSP}')
             if len(get_wksp_events) > 0:
                 def event_eval(x):
-                    EVENTS_AUDIT.append([wksp, "EVENT", str(x.get('eventType')).upper(), (x.get('eventDetail', {}).get('msg')).split(' ')[1], str(datetime.fromtimestamp(x.get('eventTs'))), "NONE"])
+                    try:
+                        EVENTS_AUDIT.append([wksp, "EVENT", str(x.get('eventType')).upper(), (x.get('eventDetail', {}).get('msg')).split(' ')[1], str(datetime.fromtimestamp(x.get('eventTs'))), "NONE"])
+                    except:
+                        print('Unable to add to Events Audit list')
                 
                 with cf.ThreadPoolExecutor() as event_exec:
-                    event_results = [event_exec.submit(event_eval, ee) for ee in get_wksp_events]
-                    for event_result in cf.as_completed(event_results):
-                        event_result.result()
+                    try:
+                        event_results = [event_exec.submit(event_eval, ee) for ee in get_wksp_events]
+                        for event_result in cf.as_completed(event_results):
+                            event_result.result()
+                    except:
+                        print('Unable to multithread the Events API requests')
             
 
     #### AUDIT LIST ARRAY FOR CSV CREATION
     AUDIT_LIST = []
     
     #### CHECK FOR WHICH AUDIT SETS NEED TO BE ADDED TO CSV
-    if len(WORKSPACES_AUDIT) > 0:
-        for wa in WORKSPACES_AUDIT:
-            AUDIT_LIST.append(wa)
-    if len(DATASOURCES_AUDIT) > 0:
-        for da in DATASOURCES_AUDIT:
-            AUDIT_LIST.append(da)
-    if len(EVENTS_AUDIT) > 0:
-        for sa in EVENTS_AUDIT:
-            AUDIT_LIST.append(sa)
-    if len(METRICS_AUDIT) > 0:
-        for meta in METRICS_AUDIT:
-            AUDIT_LIST.append(meta)
-    if len(MONITORS_AUDIT) > 0:
-        for mona in MONITORS_AUDIT:
-            AUDIT_LIST.append(mona)
-    if len(USERS_AUDIT) > 0:
-        for ua in USERS_AUDIT:
-            AUDIT_LIST.append(ua)
-    if len(W_USERS_AUDIT) > 0:
-        for wua in W_USERS_AUDIT:
-            AUDIT_LIST.append(wua)
-    if len(DASHBOARDS_AUDIT) > 0:
-        for dasha in DASHBOARDS_AUDIT:
-            AUDIT_LIST.append(dasha)
-    if len(INCIDENTS_AUDIT) > 0:
-        for ia in INCIDENTS_AUDIT:
-            AUDIT_LIST.append(ia)
+    try:
+        if len(WORKSPACES_AUDIT) > 0:
+            for wa in WORKSPACES_AUDIT:
+                AUDIT_LIST.append(wa)
+        if len(DATASOURCES_AUDIT) > 0:
+            for da in DATASOURCES_AUDIT:
+                AUDIT_LIST.append(da)
+        if len(EVENTS_AUDIT) > 0:
+            for sa in EVENTS_AUDIT:
+                AUDIT_LIST.append(sa)
+        if len(METRICS_AUDIT) > 0:
+            for meta in METRICS_AUDIT:
+                AUDIT_LIST.append(meta)
+        if len(MONITORS_AUDIT) > 0:
+            for mona in MONITORS_AUDIT:
+                AUDIT_LIST.append(mona)
+        if len(USERS_AUDIT) > 0:
+            for ua in USERS_AUDIT:
+                AUDIT_LIST.append(ua)
+        if len(W_USERS_AUDIT) > 0:
+            for wua in W_USERS_AUDIT:
+                AUDIT_LIST.append(wua)
+        if len(DASHBOARDS_AUDIT) > 0:
+            for dasha in DASHBOARDS_AUDIT:
+                AUDIT_LIST.append(dasha)
+        if len(INCIDENTS_AUDIT) > 0:
+            for ia in INCIDENTS_AUDIT:
+                AUDIT_LIST.append(ia)
+    except:
+        print('Unable to compile Audit List list')
     
     #### CREATE EXCEL DOC FOR AUDIT OUTPUT
     with xl.Workbook("./audit_output.xlsx") as workbook:
@@ -286,21 +368,37 @@ def daily_audit(headers):
         if len(AUDIT_LIST) > 0:
             fields = ["WORKSPACE", "OBJECT", "EVENT", "OBJECT NAME", "EVENT TIME", "NAME"]
             row = 1
-            audit_worksheet = workbook.add_worksheet('AUDIT')
-            audit_worksheet.write_row(0, 0, fields)
+            try:
+                audit_worksheet = workbook.add_worksheet('AUDIT')
+                audit_worksheet.write_row(0, 0, fields)
+            except:
+                print('Unable to access the AUDIT Excel Worksheet')
+            
             for al in AUDIT_LIST:
-                audit_worksheet.write_row(row, 0, al)
-                row += 1
+                try:
+                    audit_worksheet.write_row(row, 0, al)
+                    row += 1
+                except:
+                    print('Unable to add row to AUDIT worksheet')
+                    row += 1
         
         #### ADD ORPHANED METRIC INFORMATION TO NEW EXCEL WORKSHEET
         if len(ORPHANED_METRICS) > 0:
             fields = ["METRIC UUID", "CREATED BY", "CREATED AT"]
             row = 1
-            orphaned_worksheet = workbook.add_worksheet('ORPHANS')
-            orphaned_worksheet.write_row(0, 0, fields)
+            try:
+                orphaned_worksheet = workbook.add_worksheet('ORPHANS')
+                orphaned_worksheet.write_row(0, 0, fields)
+            except:
+                print('Unable to access the ORPHANS Excel Worksheet')
+            
             for om in ORPHANED_METRICS:
-                orphaned_worksheet.write_row(row, 0, om)
-                row += 1
+                try:
+                    orphaned_worksheet.write_row(row, 0, om)
+                    row += 1
+                except:
+                    print('Unable to add row to ORPHANS worksheet')
+                    row += 1
 
 ################## GET APPLICATION USERS ###################
 # APPLICATION USERS ARE LISTED
