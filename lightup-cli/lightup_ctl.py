@@ -1,6 +1,6 @@
 ##########################################################################################
 # NAME: Lightup Control
-# VERSION: 0.7.0
+# VERSION: 0.8.0
 # DESCRIPTION:
 # This Lightup CLI is intended for auditing and exploring purposes of Lightup
 # which is based on the role associated to the API token supplied to the CLI.
@@ -29,6 +29,7 @@ data = json.load(f)
 
 REFRESH_TOKEN = str(data.get('data', {}).get('refresh'))
 SERVER = str(data.get('data', {}).get('server'))
+EXECUTOR = data.get('metadata', {}).get('ownedBy', {}).get('id')
 BASE_URL = f'{SERVER}/api/v1'
 
 TOKEN_PAYLOAD = {"refresh": REFRESH_TOKEN}
@@ -108,7 +109,7 @@ def daily_audit(headers):
         try:
             time_val = x.get('created_at')
             if validate_time(time_val) == True:
-                USERS_AUDIT.append(["NONE", "APP USER", "CREATION", str(x.get('username')), datetime.fromtimestamp(time_val), "NONE"])
+                USERS_AUDIT.append(["NONE", "APP USER", "CREATION", str(x.get('username')), str(datetime.fromtimestamp(time_val)), "NONE"])
         except:
             print(f'created_at is of type {type(time_val)}')
     
@@ -123,10 +124,16 @@ def daily_audit(headers):
     #### GET WORKSPACES INFORMATION
     print('GETTING WORKSPACE INFO')
     get_workspaces_response = get_req_results(f'{BASE_URL}/workspaces')
+    for g in get_users_response:
+        try:
+            if g.get('id') == EXECUTOR:
+                for w in g.get('workspaces'):
+                    workspaces[str(w.get('name'))] = str(w.get('uuid'))
+        except:
+            print("Cannot get user information")
     
     #### WORKSPACE EVAL FUNCTION FOR MULTITHREADING
     def wksp_eval(x):
-        workspaces[str(x.get('name'))] = str(x.get('uuid'))
         time_val = x.get('created_at')
         try:
             if validate_time(time_val) == True:
@@ -234,9 +241,9 @@ def daily_audit(headers):
                     diff = now - mdt
                     hour_diff = (diff.days * 24) + (diff.seconds // 3600)
                     if hour_diff > 24:
-                        ORPHANED_METRICS.append([str(x.get('metadata', {}).get('uuid')), str(x.get('metadata', {}).get('ownedBy', {}).get('username') or x.get('metadata', {}).get('updatedBy', {}).get('username')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs')))])
+                        ORPHANED_METRICS.append([wksp, str(x.get('metadata', {}).get('uuid')), str(x.get('metadata', {}).get('name')), str(x.get('metadata', {}).get('ownedBy', {}).get('username') or x.get('metadata', {}).get('updatedBy', {}).get('username')), str(datetime.fromtimestamp(x.get('status', {}).get('createdTs'))), str(datetime.fromtimestamp(x.get('status', {}).get('lastScannedTs')) if x.get('status', {}).get('lastScannedTs') is not None else "NEVER RUN"), str(x.get('metadata', {}).get('tags')), str(x.get('config', {}).get('isLive')), str(x.get('config', {}).get('synchronizationDelay')), str(x.get('config', {}).get('table', {}).get('tableName')), str(x.get('config', {}).get('table', {}).get('schemaName'))])
             except:
-                print('Unable to get metric information for orphaned metrics check')
+                print(x.get('metadata', {}).get('uuid'))
         
         with cf.ThreadPoolExecutor() as met_exec:
             try:
@@ -384,7 +391,7 @@ def daily_audit(headers):
         
         #### ADD ORPHANED METRIC INFORMATION TO NEW EXCEL WORKSHEET
         if len(ORPHANED_METRICS) > 0:
-            fields = ["METRIC UUID", "CREATED BY", "CREATED AT"]
+            fields = ["WORKSPACE", "METRIC UUID", "METRIC NAME", "CREATED BY", "CREATED AT", "LAST RUN", "TAGS", "LIVE", "SYNC DELAY", "TABLE", "SCHEMA"]
             row = 1
             try:
                 orphaned_worksheet = workbook.add_worksheet('ORPHANS')
