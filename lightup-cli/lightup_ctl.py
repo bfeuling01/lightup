@@ -1,6 +1,6 @@
 ##########################################################################################
 # NAME: Lightup Control
-# VERSION: 0.8.0
+# VERSION: 0.8.1
 # DESCRIPTION:
 # This Lightup CLI is intended for auditing and exploring purposes of Lightup
 # which is based on the role associated to the API token supplied to the CLI.
@@ -200,7 +200,8 @@ def daily_audit(headers):
             except:
                 print('Unable to get monitor information')
                 
-            monitors_set.add(str(x.get('metadata', {}).get('uuid')))
+            for mon in x.get('config', {}).get('metrics', {}):
+                monitors_set.add(mon)
         
         with cf.ThreadPoolExecutor() as mon_exec:
             try:
