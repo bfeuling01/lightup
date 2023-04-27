@@ -21,3 +21,10 @@ that is in the same folder as the create_cli.py file.
 The Create CLI will cycle through the Excel template, row by row, and update the required Lightup columns.
 
 The Explore function will allow the user to explore Lightup based on their role permissions.
+
+# Excel Template
+
+In this repository there is an Excel Template with the required structure that the CLI will need
+to run the creation process correctly. The 0.0.1 version of the Create CLI only handles NULL and 
+DISTRIBUTION checks on columns where the Tables and Columns are enabled. Future versions of the CLI
+will scale out further.
